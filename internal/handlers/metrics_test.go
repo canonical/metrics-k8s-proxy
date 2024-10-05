@@ -281,8 +281,8 @@ func Test_aggregateMetrics(t *testing.T) {
 			// total context timeout is 1 seconds
 			if tt.name == "Context Deadline Exceeded" {
 				var cancel context.CancelFunc
-				tt.args.ctx, cancel = context.WithTimeout(context.Background(), //nolint:fatcontext // limited to test usage
-					1*time.Second)
+				//nolint:fatcontext // limited to test usage
+				tt.args.ctx, cancel = context.WithTimeout(context.Background(), 1*time.Second)
 				defer cancel()
 			}
 
