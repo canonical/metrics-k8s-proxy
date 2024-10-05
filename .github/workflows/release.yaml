@@ -1,0 +1,35 @@
+name: Release metrics-proxy
+
+on:
+  push:
+    tags: ["*"]
+
+jobs:
+  build:
+    name: Build and Release metrics-proxy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      - name: Run tests
+        run: |
+          go test -v ./...
+
+      - name: Setup goreleaser
+        run: |
+          sudo snap install --classic goreleaser
+
+      - name: Release metrics-proxy
+        id: build
+        run: |
+          goreleaser release --verbose --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

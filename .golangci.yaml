@@ -1,0 +1,10 @@
+linters:
+  enable-all: true
+  # Disable specific linter
+  # https://golangci-lint.run/usage/linters/#disabled-by-default
+  disable:
+    - depguard
+    - exhaustruct
+    - err113
+    - varnamelen
+    # Deprecated linters
