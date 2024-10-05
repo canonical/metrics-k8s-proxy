@@ -26,7 +26,7 @@ func GetKubernetesClient(
 	return config, clientset, nil
 }
 
-// Default functions to be used when not testing
+// Default functions to be used when not testing.
 func DefaultBuildConfigFunc() (*rest.Config, error) {
 	if kubeconfig := os.Getenv("KUBECONFIG"); kubeconfig != "" {
 		return clientcmd.BuildConfigFromFlags("", kubeconfig)

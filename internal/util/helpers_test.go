@@ -84,7 +84,8 @@ func TestAppendLabels(t *testing.T) {
 				podName:     "pod1",
 				namespace:   "default",
 			},
-			want: "http_requests_total{k8s_pod_name=\"pod1\",k8s_namespace=\"default\"} 5\ncpu_usage{k8s_pod_name=\"pod1\",k8s_namespace=\"default\"} 90",
+			want: "http_requests_total{k8s_pod_name=\"pod1\",k8s_namespace=\"default\"} 5\n" +
+				"cpu_usage{k8s_pod_name=\"pod1\",k8s_namespace=\"default\"} 90",
 		},
 		{
 			name: "empty metric data",
@@ -153,7 +154,8 @@ func TestAppendUpMetric(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := util.AppendUpMetric(tt.args.metricsData, tt.args.podName, tt.args.namespace, tt.args.status); got != tt.want {
+			if got := util.AppendUpMetric(tt.args.metricsData, tt.args.podName,
+				tt.args.namespace, tt.args.status); got != tt.want {
 				t.Errorf("AppendUpMetric() = %v, want %v", got, tt.want)
 				t.Logf("Got: %q", got)
 				t.Logf("Want: %q", tt.want)

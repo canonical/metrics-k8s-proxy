@@ -60,7 +60,7 @@ type mockReadCloser struct {
 	err error
 }
 
-func (m *mockReadCloser) Read(_ []byte) (n int, err error) {
+func (m *mockReadCloser) Read(_ []byte) (int, error) {
 	return 0, m.err // Always return the error
 }
 
@@ -102,7 +102,9 @@ func Test_scrapePodMetrics(t *testing.T) {
 				},
 				ctx: context.Background(),
 			},
-			want:    "metric1{k8s_pod_name=\"test-pod\",k8s_namespace=\"test-namespace\"} 1\nmetric2{k8s_pod_name=\"test-pod\",k8s_namespace=\"test-namespace\"} 2\nup{k8s_pod_name=\"test-pod\",k8s_namespace=\"test-namespace\"} 1\n",
+			want: "metric1{k8s_pod_name=\"test-pod\",k8s_namespace=\"test-namespace\"} 1\n" +
+				"metric2{k8s_pod_name=\"test-pod\",k8s_namespace=\"test-namespace\"} 2\n" +
+				"up{k8s_pod_name=\"test-pod\",k8s_namespace=\"test-namespace\"} 1\n",
 			wantErr: false,
 		},
 		{
@@ -175,11 +177,11 @@ func Test_scrapePodMetrics(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := handlers.ScrapePodMetrics(tt.args.ctx, tt.args.podIP, tt.args.metrics, tt.args.client)
+			h := handlers.NewMetricsHandler(tt.args.client)
+			got, err := h.ScrapePodMetrics(tt.args.ctx, tt.args.podIP, tt.args.metrics)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("scrapePodMetrics() error = %v, wantErr %v", err, tt.wantErr)
 				return
-
 			}
 			if got != tt.want {
 				t.Errorf("scrapePodMetrics() = %v, want %v", got, tt.want)
@@ -190,7 +192,8 @@ func Test_scrapePodMetrics(t *testing.T) {
 
 // Test_aggregateMetrics tests the aggregateMetrics function.
 func Test_aggregateMetrics(t *testing.T) {
-	k8s.PodMetricsEndpoints = map[string]k8s.PodMetrics{
+	mm := k8s.NewMetricsManager()
+	mm.PodMetricsEndpoints = map[string]k8s.PodMetrics{
 		"127.0.0.1": {
 			Port:      "8080",
 			Path:      "/metrics",
@@ -234,10 +237,14 @@ func Test_aggregateMetrics(t *testing.T) {
 				ctx: context.Background(),
 			},
 			want: []string{
-				"metric1{k8s_pod_name=\"test-pod-1\",k8s_namespace=\"test-namespace\"} 1\nmetric2{k8s_pod_name=\"test-pod-1\",k8s_namespace=\"test-namespace\"} 2\nup{k8s_pod_name=\"test-pod-1\",k8s_namespace=\"test-namespace\"} 1\n",
-				"metric1{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 1\nmetric2{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 2\nup{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 1\n",
+				"metric1{k8s_pod_name=\"test-pod-1\",k8s_namespace=\"test-namespace\"} 1\n" +
+					"metric2{k8s_pod_name=\"test-pod-1\",k8s_namespace=\"test-namespace\"} 2\n" +
+					"up{k8s_pod_name=\"test-pod-1\",k8s_namespace=\"test-namespace\"} 1\n",
+				"metric1{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 1\n" +
+					"metric2{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 2\n" +
+					"up{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 1\n",
 			},
-			wantErr: nil,
+			wantErr: []string{},
 		},
 		{
 			name: "Context Deadline Exceeded",
@@ -270,14 +277,16 @@ func Test_aggregateMetrics(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			h := handlers.NewMetricsHandler(tt.args.client)
 			// total context timeout is 1 seconds
 			if tt.name == "Context Deadline Exceeded" {
 				var cancel context.CancelFunc
-				tt.args.ctx, cancel = context.WithTimeout(context.Background(), 1*time.Second)
+				tt.args.ctx, cancel = context.WithTimeout(context.Background(), //nolint:fatcontext // limited to test usage
+					1*time.Second)
 				defer cancel()
 			}
 
-			got, gotErr := handlers.AggregateMetrics(tt.args.ctx, tt.args.client) // Pass context here
+			got, gotErr := h.AggregateMetrics(tt.args.ctx, mm) // Pass context here
 			sort.Strings(got)
 			sort.Strings(tt.want)
 			sort.Strings(gotErr)
@@ -287,7 +296,7 @@ func Test_aggregateMetrics(t *testing.T) {
 				t.Errorf("aggregateMetrics() got = %v, want %v", got, tt.want)
 			}
 			if !reflect.DeepEqual(gotErr, tt.wantErr) {
-				t.Errorf("aggregateMetrics() gotErr = %v, want %v", gotErr, tt.wantErr)
+				t.Errorf("aggregateMetrics() gotErr = %v, wantErr %v", gotErr, tt.wantErr)
 			}
 		})
 	}
@@ -295,7 +304,8 @@ func Test_aggregateMetrics(t *testing.T) {
 
 // Test_ProxyMetrics tests the ProxyMetrics HTTP handler.
 func Test_ProxyMetrics(t *testing.T) {
-	k8s.PodMetricsEndpoints = map[string]k8s.PodMetrics{
+	mm := k8s.NewMetricsManager()
+	mm.PodMetricsEndpoints = map[string]k8s.PodMetrics{
 		"127.0.0.1": {
 			Port:      "8080",
 			Path:      "/metrics",
@@ -330,8 +340,12 @@ func Test_ProxyMetrics(t *testing.T) {
 					},
 				},
 			},
-			expectedResponse: "metric1{k8s_pod_name=\"test-pod-1\",k8s_namespace=\"test-namespace\"} 1\nmetric2{k8s_pod_name=\"test-pod-1\",k8s_namespace=\"test-namespace\"} 2\nup{k8s_pod_name=\"test-pod-1\",k8s_namespace=\"test-namespace\"} 1\n" +
-				"\nmetric1{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 1\nmetric2{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 2\nup{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 1\n",
+			expectedResponse: "metric1{k8s_pod_name=\"test-pod-1\",k8s_namespace=\"test-namespace\"} 1\n" +
+				"metric2{k8s_pod_name=\"test-pod-1\",k8s_namespace=\"test-namespace\"} 2\n" +
+				"up{k8s_pod_name=\"test-pod-1\",k8s_namespace=\"test-namespace\"} 1\n" +
+				"\nmetric1{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 1\n" +
+				"metric2{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 2\n" +
+				"up{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 1\n",
 			expectedErrors: nil,
 		},
 		{
@@ -349,7 +363,9 @@ func Test_ProxyMetrics(t *testing.T) {
 				},
 			},
 			expectedResponse: "\nup{k8s_pod_name=\"test-pod-1\",k8s_namespace=\"test-namespace\"} 0\n" +
-				"\nmetric1{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 1\nmetric2{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 2\nup{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 1\n",
+				"\nmetric1{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 1\n" +
+				"metric2{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 2\n" +
+				"up{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 1\n",
 			expectedErrors: nil,
 		},
 		{
@@ -382,10 +398,9 @@ func Test_ProxyMetrics(t *testing.T) {
 			}
 
 			// Override the global client with the mock client for the duration of this test
-			handlers.Client = tt.mockClient
-
+			h := handlers.NewMetricsHandler(tt.mockClient)
 			// Call the ProxyMetrics function
-			handlers.ProxyMetrics(rr, req)
+			h.ProxyMetrics(rr, req, mm)
 
 			// Check the response
 			gotResponse := rr.Body.String()

@@ -5,11 +5,16 @@ import (
 	"strings"
 )
 
+const (
+	KeyValuePartsLength = 2
+	MetricPartsLength   = 2
+)
+
 // ParseLabels parses a label selector string into a map.
 func ParseLabels(labelString string) map[string]string {
 	labels := map[string]string{}
 	for _, pair := range strings.Split(labelString, ",") {
-		if keyValue := strings.Split(pair, "="); len(keyValue) == 2 {
+		if keyValue := strings.Split(pair, "="); len(keyValue) == KeyValuePartsLength {
 			labels[keyValue[0]] = keyValue[1]
 		}
 	}
@@ -18,7 +23,7 @@ func ParseLabels(labelString string) map[string]string {
 }
 
 // appendLabels adds pod-specific labels to each metric.
-// this was added to allow metrics distinction if multiple pods are reporting the same metric
+// this was added to allow metrics distinction if multiple pods are reporting the same metric.
 func AppendLabels(metricsData, podName, namespace string) string {
 	// Split the metrics into lines
 	lines := strings.Split(metricsData, "\n")
@@ -41,7 +46,7 @@ func AppendLabels(metricsData, podName, namespace string) string {
 		} else {
 			// Add the labels before the value (after the metric name).
 			parts := strings.Fields(line)
-			if len(parts) == 2 {
+			if len(parts) == MetricPartsLength {
 				metricName := parts[0]
 				metricValue := parts[1]
 				line = fmt.Sprintf("%s{k8s_pod_name=\"%s\",k8s_namespace=\"%s\"} %s", metricName, podName, namespace, metricValue)

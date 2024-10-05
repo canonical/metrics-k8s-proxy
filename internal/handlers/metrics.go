@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
 
-	"github.com/canonical/metrics-k8s-proxy/internal/util"
-
 	"github.com/canonical/metrics-k8s-proxy/internal/k8s"
+	"github.com/canonical/metrics-k8s-proxy/internal/util"
 )
 
 // HTTPClient defines the interface for the HTTP client.
@@ -28,25 +28,28 @@ func (c *RealHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	return c.Client.Do(req)
 }
 
-// Create an HTTP client as a module-level variable.
-var Client HTTPClient = &RealHTTPClient{
-	Client: &http.Client{},
+// MetricsHandler holds the HTTP client.
+type MetricsHandler struct {
+	client HTTPClient
 }
 
-// scrapePodMetrics scrapes metrics from a given pod and returns the combined metrics with the "up" metric.
-func ScrapePodMetrics(ctx context.Context, podIP string, metrics k8s.PodMetrics, client HTTPClient) (string, error) {
-	url := fmt.Sprintf("http://%s:%s%s", podIP, metrics.Port, metrics.Path)
+// NewMetricsHandler creates a new MetricsHandler with the given HTTP client.
+func NewMetricsHandler(client HTTPClient) *MetricsHandler {
+	return &MetricsHandler{client: client}
+}
 
-	// Create an HTTP request with the provided context
+// ScrapePodMetrics scrapes metrics from a given pod and returns the combined metrics with the "up" metric.
+func (h *MetricsHandler) ScrapePodMetrics(ctx context.Context, podIP string, metrics k8s.PodMetrics) (string, error) {
+	hostPort := net.JoinHostPort(podIP, metrics.Port)
+	url := fmt.Sprintf("http://%s%s", hostPort, metrics.Path)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		// Return up=0 for request creation error
 		return util.AppendUpMetric("", metrics.PodName, metrics.Namespace, 0),
 			fmt.Errorf("error creating request for %s: %w", url, err)
 	}
-
 	// Perform the HTTP request with context
-	resp, err := client.Do(req)
+	resp, err := h.client.Do(req)
 	if err != nil {
 		// Return up=0 for failed request
 		return util.AppendUpMetric("", metrics.PodName, metrics.Namespace, 0),
@@ -73,25 +76,23 @@ func ScrapePodMetrics(ctx context.Context, podIP string, metrics k8s.PodMetrics,
 	return util.AppendUpMetric(labeledMetrics, metrics.PodName, metrics.Namespace, 1), nil
 }
 
-// aggregateMetrics collects metrics from all pods concurrently and returns aggregated results.
-func AggregateMetrics(ctx context.Context, client HTTPClient) (responses []string, errors []string) {
+// AggregateMetrics collects metrics from all pods concurrently and returns aggregated results.
+func (h *MetricsHandler) AggregateMetrics(ctx context.Context, mm *k8s.MetricsManager) ([]string, []string) {
 	var wg sync.WaitGroup
-	var respMu sync.Mutex // Mutex for synchronizing access to responses and errors slices.
-
-	// Iterate over the pod metrics endpoints and make parallel HTTP requests.
-	for podIP, metrics := range k8s.PodMetricsEndpoints {
+	var respMu sync.Mutex
+	responses := []string{}
+	errors := []string{}
+	for podIP, metrics := range mm.GetPodMetricsEndpoints() {
 		wg.Add(1)
 
-		// Fanning out the HTTP requests in a goroutines.
 		go func(podIP string, metrics k8s.PodMetrics) {
 			defer wg.Done()
 
 			select {
-			case <-ctx.Done(): // Check if the context deadline is exceeded
+			case <-ctx.Done():
 				return
-
 			default:
-				metricsResult, err := ScrapePodMetrics(ctx, podIP, metrics, client)
+				metricsResult, err := h.ScrapePodMetrics(ctx, podIP, metrics)
 				respMu.Lock()
 				defer respMu.Unlock()
 				if err != nil {
@@ -108,22 +109,17 @@ func AggregateMetrics(ctx context.Context, client HTTPClient) (responses []strin
 	return responses, errors
 }
 
-// ProxyMetrics aggregates metrics from all pods,
-// appends pod metadata and 'up' metric, and returns them in a HTTP response.
-func ProxyMetrics(w http.ResponseWriter, r *http.Request) {
-	// Use the context from the HTTP request.
+// ProxyMetrics aggregates metrics from all pods, appends pod metadata and 'up' metric, and returns them as text.
+func (h *MetricsHandler) ProxyMetrics(w http.ResponseWriter, r *http.Request, mm *k8s.MetricsManager) {
 	ctx := r.Context()
-	// Aggregate metrics from all pods.
-	responses, errors := AggregateMetrics(ctx, Client)
+	responses, errors := h.AggregateMetrics(ctx, mm)
 
-	// Respond with the aggregated metrics.
 	w.Header().Set("Content-Type", "text/plain")
 
 	// If there are responses, write them to the response body.
 	if len(responses) > 0 {
 		// Join responses with a newline and write them.
 		writeResponse(w, strings.Join(responses, "\n"), http.StatusOK)
-
 		return
 	}
 
@@ -131,7 +127,6 @@ func ProxyMetrics(w http.ResponseWriter, r *http.Request) {
 	if len(errors) > 0 {
 		// Set the appropriate error status code.
 		writeResponse(w, strings.Join(errors, "\n"), http.StatusInternalServerError)
-
 		return
 	}
 

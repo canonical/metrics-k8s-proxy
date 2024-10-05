@@ -11,7 +11,7 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-// Mock functions for testing
+// Mock functions for testing.
 func mockBuildConfigSuccess() (*rest.Config, error) {
 	return &rest.Config{Host: "https://mock-cluster"}, nil
 }
