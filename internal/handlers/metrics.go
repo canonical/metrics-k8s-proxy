@@ -39,7 +39,8 @@ func NewMetricsHandler(client HTTPClient) *MetricsHandler {
 }
 
 // ScrapePodMetrics scrapes metrics from a given pod and returns the combined metrics with the "up" metric.
-func (h *MetricsHandler) ScrapePodMetrics(ctx context.Context, podIP string, metrics k8s.PodScrapeDetails) (string, error) {
+func (h *MetricsHandler) ScrapePodMetrics(ctx context.Context, podIP string,
+	metrics k8s.PodScrapeDetails) (string, error) {
 	hostPort := net.JoinHostPort(podIP, metrics.Port)
 	url := fmt.Sprintf("http://%s%s", hostPort, metrics.Path)
 
