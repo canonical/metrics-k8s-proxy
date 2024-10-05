@@ -71,7 +71,7 @@ func (m *mockReadCloser) Close() error {
 func Test_scrapePodMetrics(t *testing.T) {
 	type args struct {
 		podIP   string
-		metrics k8s.PodMetrics
+		metrics k8s.PodScrapeDetails
 		client  *mockHTTPClient
 		ctx     context.Context
 	}
@@ -86,7 +86,7 @@ func Test_scrapePodMetrics(t *testing.T) {
 			name: "Successful Metrics Scrape",
 			args: args{
 				podIP: "127.0.0.1",
-				metrics: k8s.PodMetrics{
+				metrics: k8s.PodScrapeDetails{
 					Port:      "8080",
 					Path:      "/metrics",
 					PodName:   "test-pod",
@@ -111,7 +111,7 @@ func Test_scrapePodMetrics(t *testing.T) {
 			name: "Network Error",
 			args: args{
 				podIP: "127.0.0.1",
-				metrics: k8s.PodMetrics{
+				metrics: k8s.PodScrapeDetails{
 					Port:      "8080",
 					Path:      "/metrics",
 					PodName:   "test-pod",
@@ -131,7 +131,7 @@ func Test_scrapePodMetrics(t *testing.T) {
 			name: "Non-200 HTTP Status",
 			args: args{
 				podIP: "127.0.0.1",
-				metrics: k8s.PodMetrics{
+				metrics: k8s.PodScrapeDetails{
 					Port:      "8080",
 					Path:      "/metrics",
 					PodName:   "test-pod",
@@ -154,7 +154,7 @@ func Test_scrapePodMetrics(t *testing.T) {
 			name: "Read Error",
 			args: args{
 				podIP: "127.0.0.1",
-				metrics: k8s.PodMetrics{
+				metrics: k8s.PodScrapeDetails{
 					Port:      "8080",
 					Path:      "/metrics",
 					PodName:   "test-pod",
@@ -192,8 +192,8 @@ func Test_scrapePodMetrics(t *testing.T) {
 
 // Test_aggregateMetrics tests the aggregateMetrics function.
 func Test_aggregateMetrics(t *testing.T) {
-	mm := k8s.NewMetricsManager()
-	mm.PodMetricsEndpoints = map[string]k8s.PodMetrics{
+	pw := k8s.NewPodScrapeWatcher()
+	pw.PodMetricsEndpoints = map[string]k8s.PodScrapeDetails{
 		"127.0.0.1": {
 			Port:      "8080",
 			Path:      "/metrics",
@@ -286,7 +286,7 @@ func Test_aggregateMetrics(t *testing.T) {
 				defer cancel()
 			}
 
-			got, gotErr := h.AggregateMetrics(tt.args.ctx, mm) // Pass context here
+			got, gotErr := h.AggregateMetrics(tt.args.ctx, pw)
 			sort.Strings(got)
 			sort.Strings(tt.want)
 			sort.Strings(gotErr)
@@ -304,8 +304,8 @@ func Test_aggregateMetrics(t *testing.T) {
 
 // Test_ProxyMetrics tests the ProxyMetrics HTTP handler.
 func Test_ProxyMetrics(t *testing.T) {
-	mm := k8s.NewMetricsManager()
-	mm.PodMetricsEndpoints = map[string]k8s.PodMetrics{
+	pw := k8s.NewPodScrapeWatcher()
+	pw.PodMetricsEndpoints = map[string]k8s.PodScrapeDetails{
 		"127.0.0.1": {
 			Port:      "8080",
 			Path:      "/metrics",
@@ -400,7 +400,7 @@ func Test_ProxyMetrics(t *testing.T) {
 			// Override the global client with the mock client for the duration of this test
 			h := handlers.NewMetricsHandler(tt.mockClient)
 			// Call the ProxyMetrics function
-			h.ProxyMetrics(rr, req, mm)
+			h.ProxyMetrics(rr, req, pw)
 
 			// Check the response
 			gotResponse := rr.Body.String()

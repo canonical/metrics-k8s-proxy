@@ -11,17 +11,17 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// PodMetrics stores the metrics endpoint details and metadata for a pod.
-type PodMetrics struct {
+// PodScrapeDetails stores the metrics endpoint details and metadata for a pod.
+type PodScrapeDetails struct {
 	Port      string
 	Path      string
 	PodName   string
 	Namespace string
 }
 
-// MetricsManager manages pod metrics and provides methods to handle updates and deletions.
-type MetricsManager struct {
-	PodMetricsEndpoints map[string]PodMetrics
+// PodScrapeWatcher manages pod metrics and provides methods to handle updates and deletions.
+type PodScrapeWatcher struct {
+	PodMetricsEndpoints map[string]PodScrapeDetails
 	mu                  sync.Mutex
 
 	// Function variables for update and delete operations, to allow mocking during tests.
@@ -30,33 +30,33 @@ type MetricsManager struct {
 	HandlePodEventFunc   func(watch.Event)
 }
 
-// NewMetricsManager initializes a new MetricsManager with default function implementations.
-func NewMetricsManager() *MetricsManager {
-	mm := &MetricsManager{
-		PodMetricsEndpoints: make(map[string]PodMetrics),
+// NewPodScrapeWatcher initializes a new PodScrapeWatcher with default function implementations.
+func NewPodScrapeWatcher() *PodScrapeWatcher {
+	pw := &PodScrapeWatcher{
+		PodMetricsEndpoints: make(map[string]PodScrapeDetails),
 	}
-	mm.HandlePodEventFunc = mm.HandlePodEvent
-	mm.UpdatePodMetricsFunc = mm.UpdatePodMetrics
-	mm.DeletePodMetricsFunc = mm.DeletePodMetrics
+	pw.HandlePodEventFunc = pw.HandlePodEvent
+	pw.UpdatePodMetricsFunc = pw.UpdatePodMetrics
+	pw.DeletePodMetricsFunc = pw.DeletePodMetrics
 
-	return mm
+	return pw
 }
 
 // GetPodMetricsEndpoints returns the current pod metrics endpoints.
-func (mm *MetricsManager) GetPodMetricsEndpoints() map[string]PodMetrics {
-	mm.mu.Lock()
-	defer mm.mu.Unlock()
+func (pw *PodScrapeWatcher) GetPodMetricsEndpoints() map[string]PodScrapeDetails {
+	pw.mu.Lock()
+	defer pw.mu.Unlock()
 
 	// Return a copy of the PodMetricsEndpoints to avoid race conditions
-	endpointsCopy := make(map[string]PodMetrics)
-	for k, v := range mm.PodMetricsEndpoints {
+	endpointsCopy := make(map[string]PodScrapeDetails)
+	for k, v := range pw.PodMetricsEndpoints {
 		endpointsCopy[k] = v
 	}
 	return endpointsCopy
 }
 
 // WatchPods watches for pod changes and updates the metrics endpoints accordingly.
-func (mm *MetricsManager) WatchPods(clientset kubernetes.Interface, namespace string, labels map[string]string) {
+func (pw *PodScrapeWatcher) WatchPods(clientset kubernetes.Interface, namespace string, labels map[string]string) {
 	labelSelector := metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: labels})
 	for {
 		watcher, err := clientset.CoreV1().Pods(namespace).Watch(context.TODO(), metav1.ListOptions{
@@ -67,27 +67,27 @@ func (mm *MetricsManager) WatchPods(clientset kubernetes.Interface, namespace st
 		}
 
 		for event := range watcher.ResultChan() {
-			mm.HandlePodEventFunc(event)
+			pw.HandlePodEventFunc(event)
 		}
 	}
 }
 
 // HandlePodEvent processes the pod events and updates the pod metrics endpoints.
-func (mm *MetricsManager) HandlePodEvent(event watch.Event) {
+func (pw *PodScrapeWatcher) HandlePodEvent(event watch.Event) {
 	pod, ok := event.Object.(*corev1.Pod)
 	if !ok {
 		log.Println("Error casting event object to Pod")
 		return
 	}
 
-	mm.mu.Lock()
-	defer mm.mu.Unlock()
+	pw.mu.Lock()
+	defer pw.mu.Unlock()
 
 	switch event.Type {
 	case watch.Added, watch.Modified:
-		mm.UpdatePodMetricsFunc(pod)
+		pw.UpdatePodMetricsFunc(pod)
 	case watch.Deleted:
-		mm.DeletePodMetricsFunc(pod)
+		pw.DeletePodMetricsFunc(pod)
 	case watch.Bookmark:
 		// No action needed for bookmark events.
 	case watch.Error:
@@ -96,7 +96,7 @@ func (mm *MetricsManager) HandlePodEvent(event watch.Event) {
 }
 
 // UpdatePodMetrics updates or adds pod metrics based on the pod annotations.
-func (mm *MetricsManager) UpdatePodMetrics(pod *corev1.Pod) {
+func (pw *PodScrapeWatcher) UpdatePodMetrics(pod *corev1.Pod) {
 	annotations := pod.GetAnnotations()
 	if scrape, exists := annotations["prometheus.io/scrape"]; exists && scrape == "true" {
 		podIP := pod.Status.PodIP
@@ -114,7 +114,7 @@ func (mm *MetricsManager) UpdatePodMetrics(pod *corev1.Pod) {
 		}
 
 		// Store the pod IP, port, path, and additional metadata like name and namespace.
-		mm.PodMetricsEndpoints[podIP] = PodMetrics{
+		pw.PodMetricsEndpoints[podIP] = PodScrapeDetails{
 			Port:      port,
 			Path:      path,
 			PodName:   pod.Name,
@@ -125,10 +125,10 @@ func (mm *MetricsManager) UpdatePodMetrics(pod *corev1.Pod) {
 }
 
 // DeletePodMetrics removes the pod metrics entry when a pod is deleted.
-func (mm *MetricsManager) DeletePodMetrics(pod *corev1.Pod) {
+func (pw *PodScrapeWatcher) DeletePodMetrics(pod *corev1.Pod) {
 	podIP := pod.Status.PodIP
 	if podIP != "" {
-		delete(mm.PodMetricsEndpoints, podIP)
+		delete(pw.PodMetricsEndpoints, podIP)
 		log.Printf("Deleted pod %s with IP %s", pod.Name, podIP)
 	}
 }

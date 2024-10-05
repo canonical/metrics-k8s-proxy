@@ -39,7 +39,7 @@ func NewMetricsHandler(client HTTPClient) *MetricsHandler {
 }
 
 // ScrapePodMetrics scrapes metrics from a given pod and returns the combined metrics with the "up" metric.
-func (h *MetricsHandler) ScrapePodMetrics(ctx context.Context, podIP string, metrics k8s.PodMetrics) (string, error) {
+func (h *MetricsHandler) ScrapePodMetrics(ctx context.Context, podIP string, metrics k8s.PodScrapeDetails) (string, error) {
 	hostPort := net.JoinHostPort(podIP, metrics.Port)
 	url := fmt.Sprintf("http://%s%s", hostPort, metrics.Path)
 
@@ -77,15 +77,15 @@ func (h *MetricsHandler) ScrapePodMetrics(ctx context.Context, podIP string, met
 }
 
 // AggregateMetrics collects metrics from all pods concurrently and returns aggregated results.
-func (h *MetricsHandler) AggregateMetrics(ctx context.Context, mm *k8s.MetricsManager) ([]string, []string) {
+func (h *MetricsHandler) AggregateMetrics(ctx context.Context, pw *k8s.PodScrapeWatcher) ([]string, []string) {
 	var wg sync.WaitGroup
 	var respMu sync.Mutex
 	responses := []string{}
 	errors := []string{}
-	for podIP, metrics := range mm.GetPodMetricsEndpoints() {
+	for podIP, metrics := range pw.GetPodMetricsEndpoints() {
 		wg.Add(1)
 
-		go func(podIP string, metrics k8s.PodMetrics) {
+		go func(podIP string, metrics k8s.PodScrapeDetails) {
 			defer wg.Done()
 
 			select {
@@ -110,9 +110,9 @@ func (h *MetricsHandler) AggregateMetrics(ctx context.Context, mm *k8s.MetricsMa
 }
 
 // ProxyMetrics aggregates metrics from all pods, appends pod metadata and 'up' metric, and returns them as text.
-func (h *MetricsHandler) ProxyMetrics(w http.ResponseWriter, r *http.Request, mm *k8s.MetricsManager) {
+func (h *MetricsHandler) ProxyMetrics(w http.ResponseWriter, r *http.Request, pw *k8s.PodScrapeWatcher) {
 	ctx := r.Context()
-	responses, errors := h.AggregateMetrics(ctx, mm)
+	responses, errors := h.AggregateMetrics(ctx, pw)
 
 	w.Header().Set("Content-Type", "text/plain")
 

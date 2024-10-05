@@ -38,14 +38,14 @@ func initK8sClient() kubernetes.Interface {
 }
 
 // Starts the HTTP server.
-func startServer(timeout time.Duration, mm *k8s.MetricsManager) *http.Server {
+func startServer(timeout time.Duration, pw *k8s.PodScrapeWatcher) *http.Server {
 	r := mux.NewRouter()
 
 	httpClient := &handlers.RealHTTPClient{Client: &http.Client{}}
 	metricsHandler := handlers.NewMetricsHandler(httpClient)
 
 	r.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		metricsHandler.ProxyMetrics(w, r, mm) // mm is the instance of MetricsManager
+		metricsHandler.ProxyMetrics(w, r, pw)
 	}).Methods(http.MethodGet)
 
 	server := &http.Server{
@@ -64,12 +64,12 @@ func main() {
 
 	// Initialize Kubernetes client and start watching pods
 	clientset := initK8sClient()
-	// Create an instance of MetricsManager
-	metricsManager := k8s.NewMetricsManager()
+	// Create an instance of PodScrapeWatcher
+	podWatcher := k8s.NewPodScrapeWatcher()
 
-	go metricsManager.WatchPods(clientset, "", labels)
+	go podWatcher.WatchPods(clientset, "", labels)
 	// Start the HTTP server
-	server := startServer(timeout, metricsManager)
+	server := startServer(timeout, podWatcher)
 
 	log.Println("Starting metrics proxy server on port 15090")
 	log.Fatal(server.ListenAndServe())

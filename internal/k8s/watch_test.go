@@ -39,7 +39,7 @@ func captureLogOutput(f func()) string {
 }
 
 func TestUpdatePodMetrics(t *testing.T) {
-	mm := k8s.NewMetricsManager()
+	pw := k8s.NewPodScrapeWatcher()
 
 	type args struct {
 		pod *corev1.Pod
@@ -47,7 +47,7 @@ func TestUpdatePodMetrics(t *testing.T) {
 	tests := []struct {
 		name     string
 		args     args
-		expected k8s.PodMetrics
+		expected k8s.PodScrapeDetails
 		wantIP   string
 		wantLogs string
 	}{
@@ -69,7 +69,7 @@ func TestUpdatePodMetrics(t *testing.T) {
 					},
 				},
 			},
-			expected: k8s.PodMetrics{
+			expected: k8s.PodScrapeDetails{
 				Port:      "8080",
 				Path:      "/custom-metrics",
 				PodName:   "test-pod",
@@ -94,7 +94,7 @@ func TestUpdatePodMetrics(t *testing.T) {
 					},
 				},
 			},
-			expected: k8s.PodMetrics{},
+			expected: k8s.PodScrapeDetails{},
 			wantIP:   "",
 			wantLogs: "",
 		},
@@ -114,7 +114,7 @@ func TestUpdatePodMetrics(t *testing.T) {
 					},
 				},
 			},
-			expected: k8s.PodMetrics{},
+			expected: k8s.PodScrapeDetails{},
 			wantIP:   "",
 			wantLogs: "",
 		},
@@ -123,14 +123,14 @@ func TestUpdatePodMetrics(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Clear the PodMetricsEndpoints map for a clean test.
-			mm.PodMetricsEndpoints = make(map[string]k8s.PodMetrics)
+			pw.PodMetricsEndpoints = make(map[string]k8s.PodScrapeDetails)
 
 			logOutput := captureLogOutput(func() {
-				mm.UpdatePodMetrics(tt.args.pod)
+				pw.UpdatePodMetrics(tt.args.pod)
 			})
 
 			if tt.wantIP != "" {
-				if got, exists := mm.PodMetricsEndpoints[tt.wantIP]; !exists || !reflect.DeepEqual(got, tt.expected) {
+				if got, exists := pw.PodMetricsEndpoints[tt.wantIP]; !exists || !reflect.DeepEqual(got, tt.expected) {
 					t.Errorf("Expected PodMetricsEndpoints[%v] = %v, but got %v", tt.wantIP, tt.expected, got)
 				}
 			}
@@ -144,7 +144,7 @@ func TestUpdatePodMetrics(t *testing.T) {
 }
 
 func TestDeletePodMetrics(t *testing.T) {
-	mm := k8s.NewMetricsManager()
+	pw := k8s.NewPodScrapeWatcher()
 
 	type args struct {
 		pod *corev1.Pod
@@ -191,7 +191,7 @@ func TestDeletePodMetrics(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Pre-populate PodMetricsEndpoints with a sample pod to test deletion.
-			mm.PodMetricsEndpoints = map[string]k8s.PodMetrics{
+			pw.PodMetricsEndpoints = map[string]k8s.PodScrapeDetails{
 				"10.0.0.1": {
 					PodName:   "delete-pod",
 					Namespace: "default",
@@ -199,11 +199,11 @@ func TestDeletePodMetrics(t *testing.T) {
 			}
 
 			logOutput := captureLogOutput(func() {
-				mm.DeletePodMetrics(tt.args.pod)
+				pw.DeletePodMetrics(tt.args.pod)
 			})
 
 			if tt.wantIP != "" {
-				if _, exists := mm.PodMetricsEndpoints[tt.wantIP]; exists {
+				if _, exists := pw.PodMetricsEndpoints[tt.wantIP]; exists {
 					t.Errorf("Expected PodMetricsEndpoints[%v] to be deleted, but it still exists", tt.wantIP)
 				}
 			}
@@ -223,17 +223,17 @@ func (i *InvalidObject) GetObjectKind() schema.ObjectKind { return nil }
 func (i *InvalidObject) DeepCopyObject() runtime.Object   { return i }
 
 func TestHandlePodEvent(t *testing.T) {
-	mm := k8s.NewMetricsManager()
+	pw := k8s.NewPodScrapeWatcher()
 
 	// Mocks to check if the methods were called
 	updateCalled := false
 	deleteCalled := false
 
 	// Mock implementations
-	mm.UpdatePodMetricsFunc = func(_ *corev1.Pod) {
+	pw.UpdatePodMetricsFunc = func(_ *corev1.Pod) {
 		updateCalled = true
 	}
-	mm.DeletePodMetricsFunc = func(_ *corev1.Pod) {
+	pw.DeletePodMetricsFunc = func(_ *corev1.Pod) {
 		deleteCalled = true
 	}
 
@@ -286,7 +286,7 @@ func TestHandlePodEvent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mm.HandlePodEvent(tt.event)
+			pw.HandlePodEvent(tt.event)
 
 			if updateCalled != tt.expectUpdate {
 				t.Errorf("Expected updateCalled to be %v, got %v", tt.expectUpdate, updateCalled)
@@ -302,7 +302,7 @@ func TestHandlePodEvent(t *testing.T) {
 	}
 }
 
-// TestWatchPods tests the WatchPods function of the MetricsManager.
+// TestWatchPods tests the WatchPods function of the PodScrapeWatcher.
 func TestWatchPods(t *testing.T) {
 	type args struct {
 		clientset kubernetes.Interface
@@ -310,7 +310,7 @@ func TestWatchPods(t *testing.T) {
 		labels    map[string]string
 	}
 
-	mm := k8s.NewMetricsManager()
+	pw := k8s.NewPodScrapeWatcher()
 
 	// Create a fake Kubernetes client
 	fakeClientset := fake.NewSimpleClientset()
@@ -366,16 +366,16 @@ func TestWatchPods(t *testing.T) {
 			var lastEventType watch.EventType
 
 			// Mock the HandlePodEventFunc for the test
-			mm.HandlePodEventFunc = func(event watch.Event) {
+			pw.HandlePodEventFunc = func(event watch.Event) {
 				handlePodEventCalled = true
 				lastEventType = event.Type
 			}
 
 			// Resetting the pod metrics map for isolation
-			mm.PodMetricsEndpoints = make(map[string]k8s.PodMetrics)
+			pw.PodMetricsEndpoints = make(map[string]k8s.PodScrapeDetails)
 
 			// Run WatchPods in a goroutine since it blocks indefinitely
-			go mm.WatchPods(tt.args.clientset, tt.args.namespace, tt.args.labels)
+			go pw.WatchPods(tt.args.clientset, tt.args.namespace, tt.args.labels)
 
 			// Simulate different pod events
 			pod := &corev1.Pod{
