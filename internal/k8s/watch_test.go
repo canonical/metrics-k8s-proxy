@@ -12,8 +12,6 @@ import (
 	"github.com/canonical/metrics-k8s-proxy/internal/k8s"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
@@ -216,92 +214,6 @@ func TestDeletePodMetrics(t *testing.T) {
 	}
 }
 
-// Define a mock invalid object that does not fully implement runtime.Object.
-type InvalidObject struct{}
-
-func (i *InvalidObject) GetObjectKind() schema.ObjectKind { return nil }
-func (i *InvalidObject) DeepCopyObject() runtime.Object   { return i }
-
-func TestHandlePodEvent(t *testing.T) {
-	pw := k8s.NewPodScrapeWatcher()
-
-	// Mocks to check if the methods were called
-	updateCalled := false
-	deleteCalled := false
-
-	// Mock implementations
-	pw.UpdatePodMetricsFunc = func(_ *corev1.Pod) {
-		updateCalled = true
-	}
-	pw.DeletePodMetricsFunc = func(_ *corev1.Pod) {
-		deleteCalled = true
-	}
-
-	tests := []struct {
-		name         string
-		event        watch.Event
-		expectUpdate bool
-		expectDelete bool
-	}{
-		{
-			name: "Pod Added",
-			event: watch.Event{
-				Type: watch.Added,
-				Object: &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test-pod", Namespace: "default"},
-					Status: corev1.PodStatus{PodIP: "192.168.0.1"}},
-			},
-			expectUpdate: true,
-			expectDelete: false,
-		},
-		{
-			name: "Pod Modified",
-			event: watch.Event{
-				Type: watch.Modified,
-				Object: &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test-pod", Namespace: "default"},
-					Status: corev1.PodStatus{PodIP: "192.168.0.2"}},
-			},
-			expectUpdate: true,
-			expectDelete: false,
-		},
-		{
-			name: "Pod Deleted",
-			event: watch.Event{
-				Type: watch.Deleted,
-				Object: &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test-pod", Namespace: "default"},
-					Status: corev1.PodStatus{PodIP: "192.168.0.3"}},
-			},
-			expectUpdate: false,
-			expectDelete: true,
-		},
-		{
-			name: "Invalid Event Object",
-			event: watch.Event{
-				Type:   watch.Added,
-				Object: &InvalidObject{},
-			},
-			expectUpdate: false,
-			expectDelete: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			pw.HandlePodEvent(tt.event)
-
-			if updateCalled != tt.expectUpdate {
-				t.Errorf("Expected updateCalled to be %v, got %v", tt.expectUpdate, updateCalled)
-			}
-			if deleteCalled != tt.expectDelete {
-				t.Errorf("Expected deleteCalled to be %v, got %v", tt.expectDelete, deleteCalled)
-			}
-
-			// Reset flags for next iteration
-			updateCalled = false
-			deleteCalled = false
-		})
-	}
-}
-
 // TestWatchPods tests the WatchPods function of the PodScrapeWatcher.
 func TestWatchPods(t *testing.T) {
 	type args struct {
@@ -328,7 +240,7 @@ func TestWatchPods(t *testing.T) {
 		wantCalled bool
 	}{
 		{
-			name: "HandlePodEventFunc is called when pod added",
+			name: "UpdatePodMetricsFunc is called when pod added",
 			args: args{
 				clientset: fakeClientset,
 				namespace: "default",
@@ -338,7 +250,7 @@ func TestWatchPods(t *testing.T) {
 			wantCalled: true,
 		},
 		{
-			name: "HandlePodEventFunc is called when pod modified",
+			name: "UpdatePodMetricsFunc is called when pod modified",
 			args: args{
 				clientset: fakeClientset,
 				namespace: "default",
@@ -348,7 +260,7 @@ func TestWatchPods(t *testing.T) {
 			wantCalled: true,
 		},
 		{
-			name: "HandlePodEventFunc is called when pod deleted",
+			name: "DeletePodMetricsFunc is called when pod deleted",
 			args: args{
 				clientset: fakeClientset,
 				namespace: "default",
@@ -362,13 +274,15 @@ func TestWatchPods(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Prepare for the test
-			handlePodEventCalled := false
-			var lastEventType watch.EventType
+			handleUpdateCalled := false
+			handleDeleteCalled := false
 
-			// Mock the HandlePodEventFunc for the test
-			pw.HandlePodEventFunc = func(event watch.Event) {
-				handlePodEventCalled = true
-				lastEventType = event.Type
+			// Mock the UpdatePodMetricsFunc and DeletePodMetricsFunc for the test
+			pw.UpdatePodMetricsFunc = func(_ *corev1.Pod) {
+				handleUpdateCalled = true
+			}
+			pw.DeletePodMetricsFunc = func(_ *corev1.Pod) {
+				handleDeleteCalled = true
 			}
 
 			// Resetting the pod metrics map for isolation
@@ -382,6 +296,12 @@ func TestWatchPods(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pod",
 					Namespace: tt.args.namespace,
+					Labels:    tt.args.labels,
+					Annotations: map[string]string{
+						"prometheus.io/scrape": "true",
+						"prometheus.io/port":   "8080",
+						"prometheus.io/path":   "/metrics",
+					},
 				},
 			}
 
@@ -402,14 +322,15 @@ func TestWatchPods(t *testing.T) {
 			// Allow some time for the event to be processed
 			time.Sleep(100 * time.Millisecond)
 
-			// Check if handlePodEventFunc was called
-			if handlePodEventCalled != tt.wantCalled {
-				t.Errorf("handlePodEventFunc was not called when expected")
-			}
-
-			// Validate that the event type matches
-			if lastEventType != tt.eventType {
-				t.Errorf("Expected event type %v, but got %v", tt.eventType, lastEventType)
+			// Check if the appropriate handler was called
+			if tt.eventType == watch.Added || tt.eventType == watch.Modified {
+				if handleUpdateCalled != tt.wantCalled {
+					t.Errorf("UpdatePodMetricsFunc was not called when expected")
+				}
+			} else if tt.eventType == watch.Deleted {
+				if handleDeleteCalled != tt.wantCalled {
+					t.Errorf("DeletePodMetricsFunc was not called when expected")
+				}
 			}
 		})
 	}

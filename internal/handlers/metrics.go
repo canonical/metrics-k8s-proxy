@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -23,11 +24,6 @@ type RealHTTPClient struct {
 	*http.Client
 }
 
-// Do performs an HTTP request.
-func (c *RealHTTPClient) Do(req *http.Request) (*http.Response, error) {
-	return c.Client.Do(req)
-}
-
 // MetricsHandler holds the HTTP client.
 type MetricsHandler struct {
 	client HTTPClient
@@ -39,51 +35,52 @@ func NewMetricsHandler(client HTTPClient) *MetricsHandler {
 }
 
 // ScrapePodMetrics scrapes metrics from a given pod and returns the combined metrics with the "up" metric.
+// In case of errors, it logs them and returns the 'up=0' metric.
 func (h *MetricsHandler) ScrapePodMetrics(ctx context.Context, podIP string,
-	metrics k8s.PodScrapeDetails) (string, error) {
-	hostPort := net.JoinHostPort(podIP, metrics.Port)
-	url := fmt.Sprintf("http://%s%s", hostPort, metrics.Path)
+	metricsEndpoint k8s.PodScrapeDetails) string {
+	hostPort := net.JoinHostPort(podIP, metricsEndpoint.Port)
+	url := fmt.Sprintf("http://%s%s", hostPort, metricsEndpoint.Path)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return util.AppendUpMetric("", metrics.PodName, metrics.Namespace, 0),
-			fmt.Errorf("error creating request for %s: %w", url, err)
+		// Log the error and return the 'up=0' metric
+		log.Printf("Error creating request for %s: %v", url, err)
+		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, 0)
 	}
-	// Perform the HTTP request with context
+
 	resp, err := h.client.Do(req)
 	if err != nil {
-		// Return up=0 for failed request
-		return util.AppendUpMetric("", metrics.PodName, metrics.Namespace, 0),
-			fmt.Errorf("error scraping %s: %w", url, err)
+		// Log the error and return the 'up=0' metric
+		log.Printf("Error scraping %s: %v", url, err)
+		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, 0)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		// Return up=0 for non-200 status code
-		return util.AppendUpMetric("", metrics.PodName, metrics.Namespace, 0),
-			fmt.Errorf("failed to scrape %s, status code: %d", url, resp.StatusCode)
+		// Log the error and return the 'up=0' metric for non-200 responses
+		log.Printf("Failed to scrape %s, status code: %d", url, resp.StatusCode)
+		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, 0)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		// Return up=0 for read errors
-		return util.AppendUpMetric("", metrics.PodName, metrics.Namespace, 0),
-			fmt.Errorf("error reading response from %s: %w", url, err)
+		// Log the error and return the 'up=0' metric for body read errors
+		log.Printf("Error reading response from %s: %v", url, err)
+		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, 0)
 	}
 
 	// Append 'up=1' for successful scrape
-	labeledMetrics := util.AppendLabels(string(body), metrics.PodName, metrics.Namespace)
-
-	return util.AppendUpMetric(labeledMetrics, metrics.PodName, metrics.Namespace, 1), nil
+	labeledMetrics := util.AppendLabels(string(body), metricsEndpoint.PodName, metricsEndpoint.Namespace)
+	return util.AppendUpMetric(labeledMetrics, metricsEndpoint.PodName, metricsEndpoint.Namespace, 1)
 }
 
 // AggregateMetrics collects metrics from all pods concurrently and returns aggregated results.
-func (h *MetricsHandler) AggregateMetrics(ctx context.Context, pw *k8s.PodScrapeWatcher) ([]string, []string) {
+func (h *MetricsHandler) AggregateMetrics(ctx context.Context, pw *k8s.PodScrapeWatcher) []string {
 	var wg sync.WaitGroup
 	var respMu sync.Mutex
 	responses := []string{}
-	errors := []string{}
-	for podIP, metrics := range pw.GetPodMetricsEndpoints() {
+
+	for podIP, metrics := range pw.PodMetricsEndpoints {
 		wg.Add(1)
 
 		go func(podIP string, metrics k8s.PodScrapeDetails) {
@@ -93,12 +90,9 @@ func (h *MetricsHandler) AggregateMetrics(ctx context.Context, pw *k8s.PodScrape
 			case <-ctx.Done():
 				return
 			default:
-				metricsResult, err := h.ScrapePodMetrics(ctx, podIP, metrics)
+				metricsResult := h.ScrapePodMetrics(ctx, podIP, metrics)
 				respMu.Lock()
 				defer respMu.Unlock()
-				if err != nil {
-					errors = append(errors, err.Error())
-				}
 				responses = append(responses, metricsResult)
 			}
 		}(podIP, metrics)
@@ -107,32 +101,23 @@ func (h *MetricsHandler) AggregateMetrics(ctx context.Context, pw *k8s.PodScrape
 	// Wait for all goroutines to complete.
 	wg.Wait()
 
-	return responses, errors
+	return responses
 }
 
 // ProxyMetrics aggregates metrics from all pods, appends pod metadata and 'up' metric, and returns them as text.
 func (h *MetricsHandler) ProxyMetrics(w http.ResponseWriter, r *http.Request, pw *k8s.PodScrapeWatcher) {
 	ctx := r.Context()
-	responses, errors := h.AggregateMetrics(ctx, pw)
+	responses := h.AggregateMetrics(ctx, pw)
 
 	w.Header().Set("Content-Type", "text/plain")
 
 	// If there are responses, write them to the response body.
 	if len(responses) > 0 {
-		// Join responses with a newline and write them.
 		writeResponse(w, strings.Join(responses, "\n"), http.StatusOK)
-		return
+	} else {
+		// No successful metrics or scrapes
+		w.WriteHeader(http.StatusNoContent)
 	}
-
-	// If there are no responses, but there are errors, return the errors.
-	if len(errors) > 0 {
-		// Set the appropriate error status code.
-		writeResponse(w, strings.Join(errors, "\n"), http.StatusInternalServerError)
-		return
-	}
-
-	// If there are no responses and no errors, return an appropriate status.
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // writeResponse writes the response body and sets the appropriate status code.

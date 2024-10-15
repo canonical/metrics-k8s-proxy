@@ -1,14 +1,15 @@
 package k8s
 
 import (
-	"context"
 	"log"
 	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 )
 
 // PodScrapeDetails stores the metrics endpoint details and metadata for a pod.
@@ -27,72 +28,75 @@ type PodScrapeWatcher struct {
 	// Function variables for update and delete operations, to allow mocking during tests.
 	UpdatePodMetricsFunc func(*corev1.Pod)
 	DeletePodMetricsFunc func(*corev1.Pod)
-	HandlePodEventFunc   func(watch.Event)
 }
+
+const defaultResyncPeriod = 10 * time.Minute
 
 // NewPodScrapeWatcher initializes a new PodScrapeWatcher with default function implementations.
 func NewPodScrapeWatcher() *PodScrapeWatcher {
 	pw := &PodScrapeWatcher{
 		PodMetricsEndpoints: make(map[string]PodScrapeDetails),
 	}
-	pw.HandlePodEventFunc = pw.HandlePodEvent
 	pw.UpdatePodMetricsFunc = pw.UpdatePodMetrics
 	pw.DeletePodMetricsFunc = pw.DeletePodMetrics
 
 	return pw
 }
 
-// GetPodMetricsEndpoints returns the current pod metrics endpoints.
-func (pw *PodScrapeWatcher) GetPodMetricsEndpoints() map[string]PodScrapeDetails {
-	pw.mu.Lock()
-	defer pw.mu.Unlock()
-
-	// Return a copy of the PodMetricsEndpoints to avoid race conditions
-	endpointsCopy := make(map[string]PodScrapeDetails)
-	for k, v := range pw.PodMetricsEndpoints {
-		endpointsCopy[k] = v
-	}
-	return endpointsCopy
-}
-
-// WatchPods watches for pod changes and updates the metrics endpoints accordingly.
+// WatchPods starts the SharedInformer to monitor pod events and updates the metrics endpoints accordingly.
 func (pw *PodScrapeWatcher) WatchPods(clientset kubernetes.Interface, namespace string, labels map[string]string) {
-	labelSelector := metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: labels})
-	for {
-		watcher, err := clientset.CoreV1().Pods(namespace).Watch(context.TODO(), metav1.ListOptions{
-			LabelSelector: labelSelector,
-		})
-		if err != nil {
-			log.Fatalf("Error watching pods: %v", err)
-		}
+	factory := informers.NewSharedInformerFactoryWithOptions(
+		clientset,
+		defaultResyncPeriod,
+		informers.WithNamespace(namespace),
+		informers.WithTweakListOptions(func(opts *metav1.ListOptions) {
+			opts.LabelSelector = metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: labels})
+		}),
+	)
 
-		for event := range watcher.ResultChan() {
-			pw.HandlePodEventFunc(event)
-		}
+	podInformer := factory.Core().V1().Pods().Informer()
+
+	// Add event handlers for pod add/update/delete
+	if _, err := podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			pod, ok := obj.(*corev1.Pod)
+			if !ok {
+				log.Println("Error casting added object to Pod")
+				return
+			}
+			pw.UpdatePodMetricsFunc(pod)
+		},
+		UpdateFunc: func(_, newObj interface{}) {
+			newPod, ok := newObj.(*corev1.Pod)
+			if !ok {
+				log.Println("Error casting updated object to Pod")
+				return
+			}
+			pw.UpdatePodMetricsFunc(newPod)
+		},
+		DeleteFunc: func(obj interface{}) {
+			pod, ok := obj.(*corev1.Pod)
+			if !ok {
+				log.Println("Error casting deleted object to Pod")
+				return
+			}
+			pw.DeletePodMetricsFunc(pod)
+		},
+	}); err != nil {
+		log.Fatalf("Failed to add event handler: %v", err)
 	}
-}
 
-// HandlePodEvent processes the pod events and updates the pod metrics endpoints.
-func (pw *PodScrapeWatcher) HandlePodEvent(event watch.Event) {
-	pod, ok := event.Object.(*corev1.Pod)
-	if !ok {
-		log.Println("Error casting event object to Pod")
-		return
+	// Start the informer
+	stopCh := make(chan struct{})
+	factory.Start(stopCh)
+	// Wait for the informer cache to sync
+	if !cache.WaitForCacheSync(stopCh, podInformer.HasSynced) {
+		close(stopCh) // Explicitly close the channel before exiting
+		log.Fatal("Failed to sync pod cache")
 	}
 
-	pw.mu.Lock()
-	defer pw.mu.Unlock()
-
-	switch event.Type {
-	case watch.Added, watch.Modified:
-		pw.UpdatePodMetricsFunc(pod)
-	case watch.Deleted:
-		pw.DeletePodMetricsFunc(pod)
-	case watch.Bookmark:
-		// No action needed for bookmark events.
-	case watch.Error:
-		log.Printf("Error event occurred: %v", event.Object)
-	}
+	// Block until stopCh is closed
+	<-stopCh
 }
 
 // UpdatePodMetrics updates or adds pod metrics based on the pod annotations.
@@ -114,12 +118,15 @@ func (pw *PodScrapeWatcher) UpdatePodMetrics(pod *corev1.Pod) {
 		}
 
 		// Store the pod IP, port, path, and additional metadata like name and namespace.
+		pw.mu.Lock()
 		pw.PodMetricsEndpoints[podIP] = PodScrapeDetails{
 			Port:      port,
 			Path:      path,
 			PodName:   pod.Name,
 			Namespace: pod.Namespace,
 		}
+		pw.mu.Unlock()
+
 		log.Printf("Updated pod %s with IP %s", pod.Name, podIP)
 	}
 }
@@ -128,7 +135,10 @@ func (pw *PodScrapeWatcher) UpdatePodMetrics(pod *corev1.Pod) {
 func (pw *PodScrapeWatcher) DeletePodMetrics(pod *corev1.Pod) {
 	podIP := pod.Status.PodIP
 	if podIP != "" {
+		pw.mu.Lock()
 		delete(pw.PodMetricsEndpoints, podIP)
+		pw.mu.Unlock()
+
 		log.Printf("Deleted pod %s with IP %s", pod.Name, podIP)
 	}
 }

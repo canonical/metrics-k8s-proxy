@@ -2,7 +2,7 @@
 
 **Metrics K8s Proxy** is a lightweight proxy designed to expose a unified metrics endpoint for multiple Kubernetes pods. The proxy watches for pods in a Kubernetes cluster and listens on port `15090`, where it exposes aggregated metrics on a `/metrics` endpoint. 
 
-The proxy itself doesn't scrape metrics. Instead, when Prometheus sends a scrape request, the proxy fans out the request to all registered endpoints that have Prometheus Kubernetes service discovery annotations. It then aggregates the results and appends metadata such as pod names and namespaces, allowing Prometheus to efficiently retrieve metrics from multiple pods.
+The proxy itself doesn't proactively scrape and store metrics. Instead, it listens for incoming Prometheus scrape requests and, when a request is made to its /metrics endpoint, it fans out the request to all registered endpoints. It then aggregates the results, annotates them with pod-specific metadata such as names and namespaces, and returns the annotated metrics to Prometheus in real-time.
 
 This proxy was primarily designed for use with **Juju charms** as an add-on to the [Prometheus scrape library](https://charmhub.io/prometheus-k8s/libraries/prometheus_scrape). The library only accepts static endpoints in scrape jobs and doesn't support Kubernetes service discovery directly. The proxy solves this limitation by fanning out Prometheus scrape requests to all registered pod endpoints that have Prometheus service discovery annotations, aggregating the results, and appending pod-specific metadata such as names and namespaces.
 
