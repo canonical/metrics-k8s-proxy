@@ -86,15 +86,12 @@ func (h *MetricsHandler) AggregateMetrics(ctx context.Context, pw *k8s.PodScrape
 		go func(podIP string, metrics k8s.PodScrapeDetails) {
 			defer wg.Done()
 
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				metricsResult := h.ScrapePodMetrics(ctx, podIP, metrics)
-				respMu.Lock()
-				defer respMu.Unlock()
-				responses = append(responses, metricsResult)
-			}
+			metricsResult := h.ScrapePodMetrics(ctx, podIP, metrics)
+
+			// Always add the result, even if the context is done
+			respMu.Lock()
+			responses = append(responses, metricsResult)
+			respMu.Unlock()
 		}(podIP, metrics)
 	}
 
@@ -116,7 +113,7 @@ func (h *MetricsHandler) ProxyMetrics(w http.ResponseWriter, r *http.Request, pw
 		writeResponse(w, strings.Join(responses, "\n"), http.StatusOK)
 	} else {
 		// No successful metrics or scrapes
-		w.WriteHeader(http.StatusNoContent)
+		w.WriteHeader(http.StatusOK)
 	}
 }
 

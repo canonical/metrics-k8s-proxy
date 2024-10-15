@@ -22,32 +22,34 @@ type mockHTTPClient struct {
 	responses      map[string]*http.Response
 	err            map[string]error
 	capturedErrors []string
-	delay          time.Duration
+	delay          map[string]time.Duration // Per-URL delay
 }
 
 // Do returns a mocked response or error based on the input URL, with an optional delay.
 func (m *mockHTTPClient) Do(req *http.Request) (*http.Response, error) {
-	if m.delay > 0 {
-		time.Sleep(m.delay)
+	url := req.URL.String()
+
+	// Apply the delay for this specific URL, if present.
+	if delay, exists := m.delay[url]; exists && delay > 0 {
+		time.Sleep(delay)
 	}
-	select {
-	case <-req.Context().Done():
-		// Return an error if the context is cancelled
+
+	if req.Context().Err() != nil {
+		// Return an error if the context is cancelled or expired
 		return nil, req.Context().Err()
-	default:
-		url := req.URL.String()
-		if err, exists := m.err[url]; exists {
-			m.capturedErrors = append(m.capturedErrors, fmt.Sprintf("failed to scrape %s, %v", url, err))
-
-			return nil, err
-		}
-
-		if resp, exists := m.responses[url]; exists {
-			return resp, nil
-		}
-
-		return nil, fmt.Errorf("no mock response for %s", url)
 	}
+
+	if err, exists := m.err[url]; exists {
+		m.capturedErrors = append(m.capturedErrors, fmt.Sprintf("failed to scrape %s, %v", url, err))
+
+		return nil, err
+	}
+
+	if resp, exists := m.responses[url]; exists {
+		return resp, nil
+	}
+
+	return nil, fmt.Errorf("no mock response for %s", url)
 }
 
 // // GetCapturedErrors returns the collected errors during the test.
@@ -248,12 +250,44 @@ func Test_aggregateMetrics(t *testing.T) {
 							Body:       io.NopCloser(strings.NewReader("metric1 1\nmetric2 2")),
 						},
 					},
-					delay: 2 * time.Second, // Simulate delay to exceed context deadline
+					delay: map[string]time.Duration{
+						"http://127.0.0.1:8080/metrics": 2 * time.Second, // This pod will time out
+						"http://127.0.0.2:8080/metrics": 2 * time.Second, // This pod will time out
+					},
 				},
 				ctx: context.Background(),
 			},
 			want: []string{
 				"\nup{k8s_pod_name=\"test-pod-1\",k8s_namespace=\"test-namespace\"} 0\n",
+				"\nup{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 0\n",
+			},
+		},
+		{
+			name: "One Pod Context Canceled, One Successful",
+			args: args{
+				client: &mockHTTPClient{
+					responses: map[string]*http.Response{
+						"http://127.0.0.1:8080/metrics": {
+							StatusCode: http.StatusOK,
+							Body:       io.NopCloser(strings.NewReader("metric1 1\nmetric2 2")),
+						},
+						"http://127.0.0.2:8080/metrics": {
+							StatusCode: http.StatusOK,
+							Body:       io.NopCloser(strings.NewReader("metric1 1\nmetric2 2")),
+						},
+					},
+					// Different delays for each pod
+					delay: map[string]time.Duration{
+						"http://127.0.0.1:8080/metrics": 500 * time.Millisecond, // This pod will succeed
+						"http://127.0.0.2:8080/metrics": 2 * time.Second,        // This pod will time out
+					},
+				},
+				ctx: context.Background(),
+			},
+			want: []string{
+				"metric1{k8s_pod_name=\"test-pod-1\",k8s_namespace=\"test-namespace\"} 1\n" +
+					"metric2{k8s_pod_name=\"test-pod-1\",k8s_namespace=\"test-namespace\"} 2\n" +
+					"up{k8s_pod_name=\"test-pod-1\",k8s_namespace=\"test-namespace\"} 1\n",
 				"\nup{k8s_pod_name=\"test-pod-2\",k8s_namespace=\"test-namespace\"} 0\n",
 			},
 		},
@@ -263,7 +297,7 @@ func Test_aggregateMetrics(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			h := handlers.NewMetricsHandler(tt.args.client)
 			// total context timeout is 1 second
-			if tt.name == "Context Deadline Exceeded" {
+			if tt.name == "Context Deadline Exceeded" || tt.name == "One Pod Context Canceled, One Successful" {
 				var cancel context.CancelFunc
 				//nolint:fatcontext // limited to test usage
 				tt.args.ctx, cancel = context.WithTimeout(context.Background(), 1*time.Second)
@@ -398,7 +432,7 @@ func Test_ProxyMetrics(t *testing.T) {
 				responses: map[string]*http.Response{},
 			},
 			expectedResponse: "",
-			expectedStatus:   http.StatusNoContent,
+			expectedStatus:   http.StatusOK,
 			podMetrics:       map[string]k8s.PodScrapeDetails{},
 		},
 	}
