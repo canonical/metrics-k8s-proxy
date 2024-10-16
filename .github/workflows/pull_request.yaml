@@ -1,0 +1,49 @@
+name: Build metrics-proxy
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build:
+    name: Build metrics-proxy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      - name: Run tests
+        run: |
+          go test -coverprofile=coverage.out -v ./...
+
+      - name: Check test coverage
+        run: |
+          if [ ! -f coverage.out ]; then
+            echo "coverage.out file does not exist. Tests may have failed."
+            exit 1
+          fi
+          
+          total_coverage=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Total Coverage: $total_coverage%"
+          if (( $(echo "$total_coverage < 65" | bc -l) )); then
+            echo "Test coverage is below 65%! Coverage is at $total_coverage%."
+            exit 1
+          fi
+
+      - name: Setup goreleaser
+        run: |
+          sudo snap install --classic goreleaser
+
+      - name: Build metrics-proxy
+        id: build
+        run: |
+          goreleaser build --snapshot --verbose
