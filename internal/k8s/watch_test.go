@@ -77,6 +77,31 @@ func TestUpdatePodMetrics(t *testing.T) {
 			wantLogs: "Updated pod test-pod with IP 10.0.0.1",
 		},
 		{
+			name: "Valid pod with no custom path",
+			args: args{
+				pod: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "no-custom-pod",
+						Namespace: "default",
+						Annotations: map[string]string{
+							"prometheus.io/scrape": "true",
+						},
+					},
+					Status: corev1.PodStatus{
+						PodIP: "10.0.0.2",
+					},
+				},
+			},
+			expected: k8s.PodScrapeDetails{
+				Port:      "80",
+				Path:      "/metrics",
+				PodName:   "no-custom-pod",
+				Namespace: "default",
+			},
+			wantIP:   "10.0.0.2",
+			wantLogs: "Updated pod no-custom-pod with IP 10.0.0.2",
+		},
+		{
 			name: "Pod without IP",
 			args: args{
 				pod: &corev1.Pod{

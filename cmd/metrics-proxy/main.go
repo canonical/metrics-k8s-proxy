@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -41,8 +42,6 @@ func initK8sClient() kubernetes.Interface {
 	return clientset
 }
 
-const defaultReadTimeout = 2 * time.Second
-
 // Starts the HTTP server.
 func startServer(scrapeTimeout time.Duration, port string, pw *k8s.PodScrapeWatcher) *http.Server {
 	r := mux.NewRouter()
@@ -51,14 +50,23 @@ func startServer(scrapeTimeout time.Duration, port string, pw *k8s.PodScrapeWatc
 	metricsHandler := handlers.NewMetricsHandler(httpClient)
 
 	r.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		metricsHandler.ProxyMetrics(w, r, pw)
+		// Create a new context with a timeout based on the scrapeTimeout
+		ctx, cancel := context.WithTimeout(r.Context(), scrapeTimeout)
+		defer cancel()
+
+		metricsHandler.ProxyMetrics(w, r.WithContext(ctx), pw)
 	}).Methods(http.MethodGet)
 
 	server := &http.Server{
-		Handler:           r,
-		Addr:              fmt.Sprintf("0.0.0.0:%s", port),
-		WriteTimeout:      scrapeTimeout,
-		ReadHeaderTimeout: defaultReadTimeout,
+		Handler: r,
+		Addr:    fmt.Sprintf("0.0.0.0:%s", port),
+
+		// Below isn't tied to the context passed to the http server, but rather a global write timeout
+		// if we hit the below timeout we get an empty reply from server
+		// TODO: Do we need this?, seems redunant since it's not tied to context timeout
+		WriteTimeout: scrapeTimeout * 2, //nolint:mnd // Set to double the scrape interval to avoid timing out
+		// Below is added as a guard to Potential DoS Slowloris Attack
+		ReadHeaderTimeout: scrapeTimeout * 2, //nolint:mnd // Set to double the scrape interval to avoid timing out
 	}
 
 	return server

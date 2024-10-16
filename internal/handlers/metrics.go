@@ -80,7 +80,9 @@ func (h *MetricsHandler) AggregateMetrics(ctx context.Context, pw *k8s.PodScrape
 	var respMu sync.Mutex
 	responses := []string{}
 
-	for podIP, metrics := range pw.PodMetricsEndpoints {
+	// Get a copy of the PodMetricsEndpoints
+	podMetricsEndpoints := pw.GetPodMetricsEndpoints()
+	for podIP, metrics := range podMetricsEndpoints {
 		wg.Add(1)
 
 		go func(podIP string, metrics k8s.PodScrapeDetails) {

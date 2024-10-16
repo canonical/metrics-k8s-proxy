@@ -30,6 +30,18 @@ type PodScrapeWatcher struct {
 	DeletePodMetricsFunc func(*corev1.Pod)
 }
 
+// GetPodMetricsEndpoints returns a copy of the current pod metrics endpoints.
+func (pw *PodScrapeWatcher) GetPodMetricsEndpoints() map[string]PodScrapeDetails {
+	pw.mu.Lock()
+	defer pw.mu.Unlock()
+
+	endpointsCopy := make(map[string]PodScrapeDetails, len(pw.PodMetricsEndpoints))
+	for k, v := range pw.PodMetricsEndpoints {
+		endpointsCopy[k] = v
+	}
+	return endpointsCopy
+}
+
 const defaultResyncPeriod = 10 * time.Minute
 
 // NewPodScrapeWatcher initializes a new PodScrapeWatcher with default function implementations.
