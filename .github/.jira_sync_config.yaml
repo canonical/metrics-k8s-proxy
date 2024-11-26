@@ -6,7 +6,7 @@ settings:
     not_planned: rejected
     
   components:
-    - metrics-k8s-proxy
+    - metrics-proxy
     - team-mesh
 
   labels:
