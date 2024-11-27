@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/canonical/metrics-k8s-proxy/internal/handlers"
@@ -16,20 +17,33 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// Parses the label selector and timeout from command line arguments.
-func parseFlags() (map[string]string, time.Duration, string) {
-	labelSelector := flag.String("labels", "", "Label selector for watching pods (e.g., 'app=ztunnel')")
-	scrapeTimeout := flag.Duration("scrape_timeout",
-		9*time.Second, "Maximum allowed time for any given scrape (e.g., 15s, 1m)")
-	port := flag.String("port", "15090", "Port on which pods' metrics will be exposed")
+// Parses the label selector, timeout, and port from environment variables.
+func parseEnvVars() (map[string]string, time.Duration, string) {
+	labelSelector := os.Getenv("POD_LABEL_SELECTOR")
+	scrapeTimeoutEnv := os.Getenv("SCRAPE_TIMEOUT")
+	port := os.Getenv("PORT")
 
-	flag.Parse()
-
-	if *labelSelector == "" {
-		log.Fatal("Label selector is required (e.g., --labels app=ztunnel)")
+	if labelSelector == "" {
+		fmt.Println("Error: Environment variable POD_LABEL_SELECTOR is required.")
+		showHelp()
 	}
 
-	return util.ParseLabels(*labelSelector), *scrapeTimeout, *port
+	if port == "" {
+		port = "15090" // Default port value
+	}
+
+	// Default scrape timeout value
+	scrapeTimeout := 9 * time.Second
+	if scrapeTimeoutEnv != "" {
+		parsedTimeout, err := time.ParseDuration(scrapeTimeoutEnv)
+		if err != nil {
+			fmt.Printf("Error: Invalid value for SCRAPE_TIMEOUT: %s\n", err)
+			showHelp()
+		}
+		scrapeTimeout = parsedTimeout
+	}
+
+	return util.ParseLabels(labelSelector), scrapeTimeout, port
 }
 
 // Initializes the Kubernetes client.
@@ -72,9 +86,26 @@ func startServer(scrapeTimeout time.Duration, port string, pw *k8s.PodScrapeWatc
 	return server
 }
 
+func showHelp() {
+	fmt.Println(`Usage: metrics-proxy [--help]
+
+Environment Variables:
+  POD_LABEL_SELECTOR: Label selector for watching pods (e.g., "app=ztunnel"). Required.
+  SCRAPE_TIMEOUT: Maximum allowed time for any given scrape (e.g., "15s", "1m"). Default is "9s".
+  PORT: Port on which the metrics proxy will expose aggregated metrics collected from watched pods. Default is "15090".`)
+	os.Exit(0)
+}
+
 func main() {
+	// Parse help flag
+	help := flag.Bool("help", false, "Show usage information")
+	flag.Parse()
+
+	if *help {
+		showHelp()
+	}
 	// Parse label selector and scrapeTimeout for Kubernetes pods
-	labels, scrapeTimeout, port := parseFlags()
+	labels, scrapeTimeout, port := parseEnvVars()
 
 	// Initialize Kubernetes client and start watching pods
 	clientset := initK8sClient()

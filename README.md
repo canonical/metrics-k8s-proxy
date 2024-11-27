@@ -14,9 +14,11 @@ While the main use case is for Juju charms, this proxy can be expanded to other 
 - **Pod Discovery**: Watches for changes in the Kubernetes pods based on specified label selectors.
 - **Aggregation**: Combines metrics from multiple pods and includes a health status indicator (`up` metric) for each pod. If a pod's metrics can't be retrieved, its `up` metric is set to `0`.
 - **Exposes a unified `/metrics` endpoint**: You can access aggregated metrics for all watched pods on the proxy's `/metrics` HTTP endpoint.
-- **Configurable via Command Line Arguments**:
-  - `--labels`: Label selector for the pods to watch (e.g., `app=ztunnel`).
-  - `--timeout`: Server read and write timeout (default is 9 seconds).
+- **Configurable via Enviroment Variables**:
+  - `POD_LABEL_SELECTOR`: Label selector for watching pods (e.g., `app=ztunnel`).
+  - `SCRAPE_TIMEOUT`: Maximum allowed time for any given scrape (default is 9 seconds).
+  - `PORT`: Port on which the metrics proxy will expose aggregated metrics collected from watched pods. (default is `15090`).
+
 
 The design decision behind the default 9-second timeout is based on Prometheus' typical scrape interval of 10 seconds. This ensures that no single slow pod hangs the entire scrape request. The proxy fans out requests to all discovered pods in parallel, each within a configurable 9-second timeout. For any endpoint that fails to respond within this time, the `up` metric is set to `0` (indicating a metric collection failure), while successful responses from other pods are still aggregated and returned.
 
@@ -37,8 +39,7 @@ To run the `metrics-k8s-proxy`, you need to specify the required label selector 
 ```bash
 # ensure port 15090 is empty on your host
 
-export KUBECONFIG=<YOUR-KUBE-CONFIG>
-./metrics-proxy --labels app=my-app --timeout 15s
+KUBECONFIG=~/.kube/config POD_LABEL_SELECTOR="app=ztunnel" SCRAPE_TIMEOUT="15s" ./metrics-proxy 
 curl http://<local-IP>:15090/metrics
 ```
 
@@ -63,8 +64,13 @@ spec:
       containers:
       - name: metrics-k8s-proxy
         image: <your-registry>/<Proxy-OCI-Image>
-        args:
-        - --labels=app=my-app
+        env:
+        - name: POD_LABEL_SELECTOR
+          value: "app=my-app"
+        - name: SCRAPE_TIMEOUT
+          value: "15s"
+        - name: PORT
+          value: "15090" # Optional, only needed if you want to override the default
         ports:
         - containerPort: 15090
 ```
@@ -86,7 +92,10 @@ To integrate the proxy into your Juju charm, follow these summarized steps based
 
 4. **Configure a Pebble service**: Set up a Pebble service to run the proxy binary, passing the required label selectors and an optional custom timeout:
    ```python
-   "command": f"metrics-proxy --labels {self._metrics_labels}"
+   env = {}
+   env.update({"POD_LABEL_SELECTOR":{self._metrics_labels}})
+   "command": "metrics-proxy",
+   "environment": env,
    ```
 
 5. **Instantiate the `MetricsEndpointProvider`**: Create a `MetricsEndpointProvider` instance with a job configuration pointing to the proxy's endpoint:
