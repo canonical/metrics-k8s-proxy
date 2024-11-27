@@ -45,7 +45,7 @@ The YAML file `test-pods.yaml` contains the definitions for 3 pods with Promethe
    Start the `metrics-proxy` application, targeting pods with the label `foo=bar`:
 
    ```bash
-   ./metrics-proxy --labels foo=bar
+   POD_LABEL_SELECTOR="foo=bar" ./metrics-proxy
    ```
 
    The proxy should instatly report all pods in the cluster that have the `foo=bar` label and Prometheus annotation `scrape=true` with the below logs 
@@ -108,7 +108,7 @@ The YAML file `test-pods.yaml` contains the definitions for 3 pods with Promethe
 
 #### 4. **Additional Testing**
 
-- You can modify the timeout for the `metrics-proxy` via setting the `scrape_timeout` flag to observe the behavior when the timeout threshold is adjusted for delayed pods.
+- You can modify the timeout for the `metrics-proxy` via setting the `scrape_timeout` env to observe the behavior when the timeout threshold is adjusted for delayed pods.
 - Test scaling the number of pods or changing the labels to ensure the proxy correctly filters based on label selectors.
 
 #### 5. **Clean Up**
