@@ -10,6 +10,33 @@ const (
 	MetricPartsLength   = 2
 )
 
+// MetricStatus represents the status of a metric scrape
+type MetricStatus int
+
+const (
+	// IsDown indicates the metric scrape failed
+	IsDown MetricStatus = 0
+	// IsUp indicates the metric scrape succeeded
+	IsUp MetricStatus = 1
+)
+
+// String returns the string representation of the metric status
+func (s MetricStatus) String() string {
+	switch s {
+	case IsUp:
+		return "up"
+	case IsDown:
+		return "down"
+	default:
+		return "unknown"
+	}
+}
+
+// Value returns the numeric value of the metric status
+func (s MetricStatus) Value() int {
+	return int(s)
+}
+
 // ParseLabels parses a label selector string into a map.
 func ParseLabels(labelString string) map[string]string {
 	labels := map[string]string{}
@@ -60,9 +87,9 @@ func AppendLabels(metricsData, podName, namespace string) string {
 }
 
 // AppendUpMetric appends the 'up' metric to the existing metrics data based on the pod's scrape status.
-func AppendUpMetric(metricsData, podName, namespace string, status int) string {
+func AppendUpMetric(metricsData, podName, namespace string, status MetricStatus) string {
 	// Generate the 'up' metric based on the status
-	upMetric := fmt.Sprintf("up{k8s_pod_name=\"%s\",k8s_namespace=\"%s\"} %d\n", podName, namespace, status)
+	upMetric := fmt.Sprintf("up{k8s_pod_name=\"%s\",k8s_namespace=\"%s\"} %d\n", podName, namespace, status.Value())
 
 	// Append the 'up' metric to the metrics data
 	return fmt.Sprintf("%s\n%s", metricsData, upMetric)
