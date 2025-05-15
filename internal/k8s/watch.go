@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -56,7 +58,7 @@ func NewPodScrapeWatcher() *PodScrapeWatcher {
 }
 
 // WatchPods starts the SharedInformer to monitor pod events and updates the metrics endpoints accordingly.
-func (pw *PodScrapeWatcher) WatchPods(clientset kubernetes.Interface, namespace string, labels map[string]string) {
+func (pw *PodScrapeWatcher) WatchPods(ctx context.Context, clientset kubernetes.Interface, namespace string, labels map[string]string) {
 	factory := informers.NewSharedInformerFactoryWithOptions(
 		clientset,
 		defaultResyncPeriod,
@@ -98,59 +100,163 @@ func (pw *PodScrapeWatcher) WatchPods(clientset kubernetes.Interface, namespace 
 		log.Fatalf("Failed to add event handler: %v", err)
 	}
 
-	// Start the informer
 	stopCh := make(chan struct{})
+	defer close(stopCh)
+
 	factory.Start(stopCh)
-	// Wait for the informer cache to sync
+
 	if !cache.WaitForCacheSync(stopCh, podInformer.HasSynced) {
-		close(stopCh) // Explicitly close the channel before exiting
-		log.Fatal("Failed to sync pod cache")
+		log.Println("Failed to sync pod cache")
+		return
 	}
 
-	// Block until stopCh is closed
-	<-stopCh
+	<-ctx.Done()
+	log.Println("Pod watcher stopping...")
+}
+
+// ValidationError represents an error that occurred during pod validation
+type ValidationError struct {
+	PodName   string
+	Namespace string
+	Reason    string
+}
+
+func (e *ValidationError) Error() string {
+	return fmt.Sprintf("invalid pod configuration %s/%s: %s", e.Namespace, e.PodName, e.Reason)
+}
+
+// podMetricsConfig holds the configuration for pod metrics scraping
+type podMetricsConfig struct {
+	podIP     string
+	port      string
+	path      string
+	podName   string
+	namespace string
+}
+
+func (c *podMetricsConfig) validate() error {
+	if c.podIP == "" {
+		return &ValidationError{
+			PodName:   c.podName,
+			Namespace: c.namespace,
+			Reason:    "pod IP is empty",
+		}
+	}
+	if c.port == "" {
+		return &ValidationError{
+			PodName:   c.podName,
+			Namespace: c.namespace,
+			Reason:    "port is empty",
+		}
+	}
+	if c.path == "" {
+		return &ValidationError{
+			PodName:   c.podName,
+			Namespace: c.namespace,
+			Reason:    "path is empty",
+		}
+	}
+	return nil
+}
+
+// shouldScrapePod checks if the pod should be scraped based on its annotations
+func shouldScrapePod(pod *corev1.Pod) bool {
+	if pod == nil {
+		return false
+	}
+	annotations := pod.GetAnnotations()
+	if annotations == nil {
+		return false
+	}
+	scrape, exists := annotations["prometheus.io/scrape"]
+	return exists && scrape == "true"
+}
+
+// getMetricsConfig extracts metrics configuration from pod annotations
+func getMetricsConfig(pod *corev1.Pod) (*podMetricsConfig, error) {
+	if pod.Status.PodIP == "" {
+		return nil, &ValidationError{
+			PodName:   pod.Name,
+			Namespace: pod.Namespace,
+			Reason:    "pod IP is not assigned",
+		}
+	}
+
+	annotations := pod.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+
+	config := &podMetricsConfig{
+		podIP:     pod.Status.PodIP,
+		port:      annotations["prometheus.io/port"],
+		path:      annotations["prometheus.io/path"],
+		podName:   pod.Name,
+		namespace: pod.Namespace,
+	}
+
+	// Set defaults
+	if config.port == "" {
+		config.port = "80"
+	}
+	if config.path == "" {
+		config.path = "/metrics"
+	}
+
+	if err := config.validate(); err != nil {
+		return nil, err
+	}
+
+	return config, nil
 }
 
 // UpdatePodMetrics updates or adds pod metrics based on the pod annotations.
 func (pw *PodScrapeWatcher) UpdatePodMetrics(pod *corev1.Pod) {
-	annotations := pod.GetAnnotations()
-	if scrape, exists := annotations["prometheus.io/scrape"]; exists && scrape == "true" {
-		podIP := pod.Status.PodIP
-		if podIP == "" {
-			return
-		}
-
-		port := annotations["prometheus.io/port"]
-		if port == "" {
-			port = "80"
-		}
-		path := annotations["prometheus.io/path"]
-		if path == "" {
-			path = "/metrics"
-		}
-
-		// Store the pod IP, port, path, and additional metadata like name and namespace.
-		pw.mu.Lock()
-		pw.PodMetricsEndpoints[podIP] = PodScrapeDetails{
-			Port:      port,
-			Path:      path,
-			PodName:   pod.Name,
-			Namespace: pod.Namespace,
-		}
-		pw.mu.Unlock()
-
-		log.Printf("Updated pod %s with IP %s", pod.Name, podIP)
+	if pod == nil {
+		log.Println("Received nil pod in UpdatePodMetrics")
+		return
 	}
+
+	if !shouldScrapePod(pod) {
+		return
+	}
+
+	config, err := getMetricsConfig(pod)
+	if err != nil {
+		log.Printf("Failed to get metrics config for pod %s/%s: %v",
+			pod.Namespace, pod.Name, err)
+		return
+	}
+
+	// Store the pod metrics configuration
+	pw.mu.Lock()
+	pw.PodMetricsEndpoints[config.podIP] = PodScrapeDetails{
+		Port:      config.port,
+		Path:      config.path,
+		PodName:   config.podName,
+		Namespace: config.namespace,
+	}
+	pw.mu.Unlock()
+
+	log.Printf("Updated pod %s with IP %s", config.podName, config.podIP)
 }
 
 // DeletePodMetrics removes the pod metrics entry when a pod is deleted.
 func (pw *PodScrapeWatcher) DeletePodMetrics(pod *corev1.Pod) {
-	podIP := pod.Status.PodIP
-	if podIP != "" {
-		pw.mu.Lock()
-		delete(pw.PodMetricsEndpoints, podIP)
-		pw.mu.Unlock()
+	if pod == nil {
+		log.Println("Received nil pod in DeletePodMetrics")
+		return
+	}
 
+	podIP := pod.Status.PodIP
+	if podIP == "" {
+		return
+	}
+
+	pw.mu.Lock()
+	if _, exists := pw.PodMetricsEndpoints[podIP]; exists {
+		delete(pw.PodMetricsEndpoints, podIP)
 		log.Printf("Deleted pod %s with IP %s", pod.Name, podIP)
 	}
+	pw.mu.Unlock()
 }

@@ -45,33 +45,33 @@ func (h *MetricsHandler) ScrapePodMetrics(ctx context.Context, podIP string,
 	if err != nil {
 		// Log the error and return the 'up=0' metric
 		log.Printf("Error creating request for %s: %v", url, err)
-		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, 0)
+		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, util.IsDown)
 	}
 
 	resp, err := h.client.Do(req)
 	if err != nil {
 		// Log the error and return the 'up=0' metric
 		log.Printf("Error scraping %s: %v", url, err)
-		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, 0)
+		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, util.IsDown)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		// Log the error and return the 'up=0' metric for non-200 responses
 		log.Printf("Failed to scrape %s, status code: %d", url, resp.StatusCode)
-		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, 0)
+		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, util.IsDown)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		// Log the error and return the 'up=0' metric for body read errors
 		log.Printf("Error reading response from %s: %v", url, err)
-		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, 0)
+		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, util.IsDown)
 	}
 
 	// Append 'up=1' for successful scrape
 	labeledMetrics := util.AppendLabels(string(body), metricsEndpoint.PodName, metricsEndpoint.Namespace)
-	return util.AppendUpMetric(labeledMetrics, metricsEndpoint.PodName, metricsEndpoint.Namespace, 1)
+	return util.AppendUpMetric(labeledMetrics, metricsEndpoint.PodName, metricsEndpoint.Namespace, util.IsUp)
 }
 
 // AggregateMetrics collects metrics from all pods concurrently and returns aggregated results.
@@ -97,7 +97,6 @@ func (h *MetricsHandler) AggregateMetrics(ctx context.Context, pw *k8s.PodScrape
 		}(podIP, metrics)
 	}
 
-	// Wait for all goroutines to complete.
 	wg.Wait()
 
 	return responses
@@ -110,11 +109,9 @@ func (h *MetricsHandler) ProxyMetrics(w http.ResponseWriter, r *http.Request, pw
 
 	w.Header().Set("Content-Type", "text/plain")
 
-	// If there are responses, write them to the response body.
 	if len(responses) > 0 {
 		writeResponse(w, strings.Join(responses, "\n"), http.StatusOK)
 	} else {
-		// No successful metrics or scrapes
 		w.WriteHeader(http.StatusOK)
 	}
 }
