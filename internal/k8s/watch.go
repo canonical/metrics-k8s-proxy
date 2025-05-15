@@ -100,20 +100,16 @@ func (pw *PodScrapeWatcher) WatchPods(ctx context.Context, clientset kubernetes.
 		log.Fatalf("Failed to add event handler: %v", err)
 	}
 
-	// Create a stop channel that will be closed when the context is done
 	stopCh := make(chan struct{})
 	defer close(stopCh)
 
-	// Start the informer
 	factory.Start(stopCh)
 
-	// Wait for the informer cache to sync
 	if !cache.WaitForCacheSync(stopCh, podInformer.HasSynced) {
 		log.Println("Failed to sync pod cache")
 		return
 	}
 
-	// Wait for context cancellation
 	<-ctx.Done()
 	log.Println("Pod watcher stopping...")
 }
