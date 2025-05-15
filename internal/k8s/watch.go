@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -57,7 +58,7 @@ func NewPodScrapeWatcher() *PodScrapeWatcher {
 }
 
 // WatchPods starts the SharedInformer to monitor pod events and updates the metrics endpoints accordingly.
-func (pw *PodScrapeWatcher) WatchPods(clientset kubernetes.Interface, namespace string, labels map[string]string) {
+func (pw *PodScrapeWatcher) WatchPods(ctx context.Context, clientset kubernetes.Interface, namespace string, labels map[string]string) {
 	factory := informers.NewSharedInformerFactoryWithOptions(
 		clientset,
 		defaultResyncPeriod,
@@ -99,17 +100,22 @@ func (pw *PodScrapeWatcher) WatchPods(clientset kubernetes.Interface, namespace 
 		log.Fatalf("Failed to add event handler: %v", err)
 	}
 
-	// Start the informer
+	// Create a stop channel that will be closed when the context is done
 	stopCh := make(chan struct{})
+	defer close(stopCh)
+
+	// Start the informer
 	factory.Start(stopCh)
+
 	// Wait for the informer cache to sync
 	if !cache.WaitForCacheSync(stopCh, podInformer.HasSynced) {
-		close(stopCh) // Explicitly close the channel before exiting
-		log.Fatal("Failed to sync pod cache")
+		log.Println("Failed to sync pod cache")
+		return
 	}
 
-	// Block until stopCh is closed
-	<-stopCh
+	// Wait for context cancellation
+	<-ctx.Done()
+	log.Println("Pod watcher stopping...")
 }
 
 // ValidationError represents an error that occurred during pod validation

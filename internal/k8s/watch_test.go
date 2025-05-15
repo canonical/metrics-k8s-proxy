@@ -2,6 +2,7 @@ package k8s_test
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"os"
 	"reflect"
@@ -314,7 +315,7 @@ func TestWatchPods(t *testing.T) {
 			pw.PodMetricsEndpoints = make(map[string]k8s.PodScrapeDetails)
 
 			// Run WatchPods in a goroutine since it blocks indefinitely
-			go pw.WatchPods(tt.args.clientset, tt.args.namespace, tt.args.labels)
+			go pw.WatchPods(context.Background(), tt.args.clientset, tt.args.namespace, tt.args.labels)
 
 			// Simulate different pod events
 			pod := &corev1.Pod{

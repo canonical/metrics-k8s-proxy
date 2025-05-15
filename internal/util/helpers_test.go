@@ -114,7 +114,7 @@ func TestAppendUpMetric(t *testing.T) {
 		metricsData string
 		podName     string
 		namespace   string
-		status      int
+		status      util.MetricStatus
 	}
 	tests := []struct {
 		name string
@@ -127,7 +127,7 @@ func TestAppendUpMetric(t *testing.T) {
 				metricsData: "http_requests_total 5",
 				podName:     "pod1",
 				namespace:   "default",
-				status:      1,
+				status:      util.IsUp,
 			},
 			want: "http_requests_total 5\nup{k8s_pod_name=\"pod1\",k8s_namespace=\"default\"} 1\n",
 		},
@@ -137,7 +137,7 @@ func TestAppendUpMetric(t *testing.T) {
 				metricsData: "",
 				podName:     "pod1",
 				namespace:   "default",
-				status:      0,
+				status:      util.IsDown,
 			},
 			want: "\nup{k8s_pod_name=\"pod1\",k8s_namespace=\"default\"} 0\n",
 		},
@@ -147,7 +147,7 @@ func TestAppendUpMetric(t *testing.T) {
 				metricsData: "cpu_usage 90",
 				podName:     "pod1",
 				namespace:   "default",
-				status:      0,
+				status:      util.IsDown,
 			},
 			want: "cpu_usage 90\nup{k8s_pod_name=\"pod1\",k8s_namespace=\"default\"} 0\n",
 		},
