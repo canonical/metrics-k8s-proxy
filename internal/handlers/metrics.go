@@ -32,6 +32,10 @@ type MetricsHandler struct {
 
 // NewMetricsHandler creates a new MetricsHandler with the given HTTP client and logger.
 func NewMetricsHandler(client HTTPClient, logger *slog.Logger) *MetricsHandler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	return &MetricsHandler{client: client, logger: logger}
 }
 
