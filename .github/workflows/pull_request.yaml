@@ -39,6 +39,11 @@ jobs:
             exit 1
           fi
 
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
       - name: Setup goreleaser
         run: |
           sudo snap install --classic goreleaser
