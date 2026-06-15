@@ -53,7 +53,10 @@ func AppendLabels(metricsData, podName, namespace string) string {
 			if len(parts) == MetricPartsLength {
 				metricName := parts[0]
 				metricValue := parts[1]
-				line = fmt.Sprintf("%s{k8s_pod_name=\"%s\",k8s_namespace=\"%s\"} %s", metricName, podName, namespace, metricValue)
+				line = fmt.Sprintf(
+					"%s{k8s_pod_name=\"%s\",k8s_namespace=\"%s\"} %s",
+					metricName, podName, namespace, metricValue,
+				)
 			}
 		}
 
