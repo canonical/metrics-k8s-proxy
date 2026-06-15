@@ -36,6 +36,10 @@ const defaultResyncPeriod = 10 * time.Minute
 
 // NewPodScrapeWatcher initializes a new PodScrapeWatcher with default function implementations.
 func NewPodScrapeWatcher(logger *slog.Logger) *PodScrapeWatcher {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	pw := &PodScrapeWatcher{
 		PodMetricsEndpoints: make(map[string]PodScrapeDetails),
 		logger:              logger,
