@@ -1,6 +1,7 @@
 package k8s_test
 
 import (
+	"log/slog"
 	"reflect"
 	"testing"
 	"time"
@@ -118,7 +119,7 @@ func TestUpdatePodMetrics(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			pw := k8s.NewPodScrapeWatcher()
+			pw := k8s.NewPodScrapeWatcher(slog.Default())
 
 			pw.UpdatePodMetrics(tt.args.pod)
 
@@ -176,7 +177,7 @@ func TestDeletePodMetrics(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			pw := k8s.NewPodScrapeWatcher()
+			pw := k8s.NewPodScrapeWatcher(slog.Default())
 			// Pre-populate PodMetricsEndpoints with a sample pod to test deletion.
 			pw.PodMetricsEndpoints = map[string]k8s.PodScrapeDetails{
 				"10.0.0.1": {
@@ -234,7 +235,7 @@ func TestWatchPods(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			pw := k8s.NewPodScrapeWatcher()
+			pw := k8s.NewPodScrapeWatcher(slog.Default())
 			fakeClientset := fake.NewSimpleClientset()
 			fakeWatcher := watch.NewFake()
 			fakeClientset.PrependWatchReactor("pods", func(_ clienttesting.Action) (bool, watch.Interface, error) {
@@ -305,6 +306,8 @@ func TestWatchPods(t *testing.T) {
 				if handleDeleteCalled != tt.wantCalled {
 					t.Errorf("DeletePodMetricsFunc was not called when expected")
 				}
+			case watch.Error, watch.Bookmark:
+				// No handler expected for these event types
 			}
 		})
 	}

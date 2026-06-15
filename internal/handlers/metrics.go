@@ -24,14 +24,15 @@ type RealHTTPClient struct {
 	*http.Client
 }
 
-// MetricsHandler holds the HTTP client.
+// MetricsHandler holds the HTTP client and logger.
 type MetricsHandler struct {
 	client HTTPClient
+	logger *slog.Logger
 }
 
-// NewMetricsHandler creates a new MetricsHandler with the given HTTP client.
-func NewMetricsHandler(client HTTPClient) *MetricsHandler {
-	return &MetricsHandler{client: client}
+// NewMetricsHandler creates a new MetricsHandler with the given HTTP client and logger.
+func NewMetricsHandler(client HTTPClient, logger *slog.Logger) *MetricsHandler {
+	return &MetricsHandler{client: client, logger: logger}
 }
 
 // ScrapePodMetrics scrapes metrics from a given pod and returns the combined metrics with the "up" metric.
@@ -44,28 +45,28 @@ func (h *MetricsHandler) ScrapePodMetrics(ctx context.Context, podIP string,
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		// Log the error and return the 'up=0' metric
-		slog.Error("Error creating request", "url", url, "error", err)
+		h.logger.ErrorContext(ctx, "Error creating request", "url", url, "error", err)
 		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, 0)
 	}
 
 	resp, err := h.client.Do(req)
 	if err != nil {
 		// Log the error and return the 'up=0' metric
-		slog.Error("Error scraping", "url", url, "error", err)
+		h.logger.ErrorContext(ctx, "Error scraping", "url", url, "error", err)
 		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, 0)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		// Log the error and return the 'up=0' metric for non-200 responses
-		slog.Error("Failed to scrape", "url", url, "status_code", resp.StatusCode)
+		h.logger.ErrorContext(ctx, "Failed to scrape", "url", url, "status_code", resp.StatusCode)
 		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, 0)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		// Log the error and return the 'up=0' metric for body read errors
-		slog.Error("Error reading response", "url", url, "error", err)
+		h.logger.ErrorContext(ctx, "Error reading response", "url", url, "error", err)
 		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, 0)
 	}
 

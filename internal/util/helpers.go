@@ -42,7 +42,11 @@ func AppendLabels(metricsData, podName, namespace string) string {
 		// Otherwise, add the labels between the metric name and its value.
 		if strings.Contains(line, "{") {
 			// Insert the pod and namespace labels within the existing labels.
-			line = strings.Replace(line, "{", fmt.Sprintf("{k8s_pod_name=\"%s\",k8s_namespace=\"%s\",", podName, namespace), 1)
+			line = strings.Replace(
+				line, "{",
+				fmt.Sprintf("{k8s_pod_name=\"%s\",k8s_namespace=\"%s\",", podName, namespace),
+				1,
+			)
 		} else {
 			// Add the labels before the value (after the metric name).
 			parts := strings.Fields(line)

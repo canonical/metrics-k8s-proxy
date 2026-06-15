@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -66,7 +67,8 @@ func startServer(scrapeTimeout time.Duration, port string, pw *k8s.PodScrapeWatc
 	r := mux.NewRouter()
 
 	httpClient := &handlers.RealHTTPClient{Client: &http.Client{}}
-	metricsHandler := handlers.NewMetricsHandler(httpClient)
+	logger := slog.Default()
+	metricsHandler := handlers.NewMetricsHandler(httpClient, logger)
 
 	r.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		// Create a new context with a timeout based on the scrapeTimeout
@@ -121,7 +123,7 @@ func main() {
 	// Initialize Kubernetes client and start watching pods
 	clientset := initK8sClient()
 	// Create an instance of PodScrapeWatcher
-	podWatcher := k8s.NewPodScrapeWatcher()
+	podWatcher := k8s.NewPodScrapeWatcher(slog.Default())
 
 	go podWatcher.WatchPods(clientset, "", labels)
 	// Start the HTTP server
