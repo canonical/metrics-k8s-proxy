@@ -1,7 +1,8 @@
 package k8s
 
 import (
-	"log"
+	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -30,18 +31,6 @@ type PodScrapeWatcher struct {
 	DeletePodMetricsFunc func(*corev1.Pod)
 }
 
-// GetPodMetricsEndpoints returns a copy of the current pod metrics endpoints.
-func (pw *PodScrapeWatcher) GetPodMetricsEndpoints() map[string]PodScrapeDetails {
-	pw.mu.Lock()
-	defer pw.mu.Unlock()
-
-	endpointsCopy := make(map[string]PodScrapeDetails, len(pw.PodMetricsEndpoints))
-	for k, v := range pw.PodMetricsEndpoints {
-		endpointsCopy[k] = v
-	}
-	return endpointsCopy
-}
-
 const defaultResyncPeriod = 10 * time.Minute
 
 // NewPodScrapeWatcher initializes a new PodScrapeWatcher with default function implementations.
@@ -53,6 +42,18 @@ func NewPodScrapeWatcher() *PodScrapeWatcher {
 	pw.DeletePodMetricsFunc = pw.DeletePodMetrics
 
 	return pw
+}
+
+// GetPodMetricsEndpoints returns a copy of the current pod metrics endpoints.
+func (pw *PodScrapeWatcher) GetPodMetricsEndpoints() map[string]PodScrapeDetails {
+	pw.mu.Lock()
+	defer pw.mu.Unlock()
+
+	endpointsCopy := make(map[string]PodScrapeDetails, len(pw.PodMetricsEndpoints))
+	for k, v := range pw.PodMetricsEndpoints {
+		endpointsCopy[k] = v
+	}
+	return endpointsCopy
 }
 
 // WatchPods starts the SharedInformer to monitor pod events and updates the metrics endpoints accordingly.
@@ -73,7 +74,7 @@ func (pw *PodScrapeWatcher) WatchPods(clientset kubernetes.Interface, namespace 
 		AddFunc: func(obj interface{}) {
 			pod, ok := obj.(*corev1.Pod)
 			if !ok {
-				log.Println("Error casting added object to Pod")
+				slog.Error("Error casting added object to Pod")
 				return
 			}
 			pw.UpdatePodMetricsFunc(pod)
@@ -81,7 +82,7 @@ func (pw *PodScrapeWatcher) WatchPods(clientset kubernetes.Interface, namespace 
 		UpdateFunc: func(_, newObj interface{}) {
 			newPod, ok := newObj.(*corev1.Pod)
 			if !ok {
-				log.Println("Error casting updated object to Pod")
+				slog.Error("Error casting updated object to Pod")
 				return
 			}
 			pw.UpdatePodMetricsFunc(newPod)
@@ -89,13 +90,14 @@ func (pw *PodScrapeWatcher) WatchPods(clientset kubernetes.Interface, namespace 
 		DeleteFunc: func(obj interface{}) {
 			pod, ok := obj.(*corev1.Pod)
 			if !ok {
-				log.Println("Error casting deleted object to Pod")
+				slog.Error("Error casting deleted object to Pod")
 				return
 			}
 			pw.DeletePodMetricsFunc(pod)
 		},
 	}); err != nil {
-		log.Fatalf("Failed to add event handler: %v", err)
+		slog.Error("Failed to add event handler", "error", err)
+		os.Exit(1)
 	}
 
 	// Start the informer
@@ -104,7 +106,8 @@ func (pw *PodScrapeWatcher) WatchPods(clientset kubernetes.Interface, namespace 
 	// Wait for the informer cache to sync
 	if !cache.WaitForCacheSync(stopCh, podInformer.HasSynced) {
 		close(stopCh) // Explicitly close the channel before exiting
-		log.Fatal("Failed to sync pod cache")
+		slog.Error("Failed to sync pod cache")
+		os.Exit(1)
 	}
 
 	// Block until stopCh is closed
@@ -139,7 +142,7 @@ func (pw *PodScrapeWatcher) UpdatePodMetrics(pod *corev1.Pod) {
 		}
 		pw.mu.Unlock()
 
-		log.Printf("Updated pod %s with IP %s", pod.Name, podIP)
+		slog.Info("Updated pod", "pod", pod.Name, "ip", podIP)
 	}
 }
 
@@ -151,6 +154,6 @@ func (pw *PodScrapeWatcher) DeletePodMetrics(pod *corev1.Pod) {
 		delete(pw.PodMetricsEndpoints, podIP)
 		pw.mu.Unlock()
 
-		log.Printf("Deleted pod %s with IP %s", pod.Name, podIP)
+		slog.Info("Deleted pod", "pod", pod.Name, "ip", podIP)
 	}
 }

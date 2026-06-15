@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -44,28 +44,28 @@ func (h *MetricsHandler) ScrapePodMetrics(ctx context.Context, podIP string,
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		// Log the error and return the 'up=0' metric
-		log.Printf("Error creating request for %s: %v", url, err)
+		slog.Error("Error creating request", "url", url, "error", err)
 		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, 0)
 	}
 
 	resp, err := h.client.Do(req)
 	if err != nil {
 		// Log the error and return the 'up=0' metric
-		log.Printf("Error scraping %s: %v", url, err)
+		slog.Error("Error scraping", "url", url, "error", err)
 		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, 0)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		// Log the error and return the 'up=0' metric for non-200 responses
-		log.Printf("Failed to scrape %s, status code: %d", url, resp.StatusCode)
+		slog.Error("Failed to scrape", "url", url, "status_code", resp.StatusCode)
 		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, 0)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		// Log the error and return the 'up=0' metric for body read errors
-		log.Printf("Error reading response from %s: %v", url, err)
+		slog.Error("Error reading response", "url", url, "error", err)
 		return util.AppendUpMetric("", metricsEndpoint.PodName, metricsEndpoint.Namespace, 0)
 	}
 

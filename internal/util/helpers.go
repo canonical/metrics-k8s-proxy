@@ -22,8 +22,8 @@ func ParseLabels(labelString string) map[string]string {
 	return labels
 }
 
-// appendLabels adds pod-specific labels to each metric.
-// this was added to allow metrics distinction if multiple pods are reporting the same metric.
+// AppendLabels adds pod-specific labels to each metric.
+// This was added to allow metrics distinction if multiple pods are reporting the same metric.
 func AppendLabels(metricsData, podName, namespace string) string {
 	// Split the metrics into lines
 	lines := strings.Split(metricsData, "\n")

@@ -20,7 +20,7 @@ import (
 
 const defaultScrapeTimeout = 9 * time.Second
 
-// Parses the label selector, timeout, and port from environment variables.
+// ParseEnvVars parses the label selector, timeout, and port from environment variables.
 func ParseEnvVars() (map[string]string, time.Duration, string, error) {
 	labelSelector := os.Getenv("POD_LABEL_SELECTOR")
 	scrapeTimeoutEnv := os.Getenv("SCRAPE_TIMEOUT")
