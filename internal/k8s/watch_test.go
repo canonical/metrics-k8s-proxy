@@ -6,12 +6,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/canonical/metrics-k8s-proxy/internal/k8s"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes/fake"
 	clienttesting "k8s.io/client-go/testing"
+
+	"github.com/canonical/metrics-k8s-proxy/internal/k8s"
 )
 
 func TestUpdatePodMetrics(t *testing.T) {

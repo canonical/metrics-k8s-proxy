@@ -11,12 +11,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/gorilla/mux"
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/canonical/metrics-k8s-proxy/internal/handlers"
 	"github.com/canonical/metrics-k8s-proxy/internal/k8s"
 	"github.com/canonical/metrics-k8s-proxy/internal/util"
-	"k8s.io/client-go/kubernetes"
-
-	"github.com/gorilla/mux"
 )
 
 const defaultScrapeTimeout = 9 * time.Second

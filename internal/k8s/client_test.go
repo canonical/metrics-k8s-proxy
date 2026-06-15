@@ -5,10 +5,11 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/canonical/metrics-k8s-proxy/internal/k8s"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
+
+	"github.com/canonical/metrics-k8s-proxy/internal/k8s"
 )
 
 // Mock functions for testing.
