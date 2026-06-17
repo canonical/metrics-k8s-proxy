@@ -23,7 +23,7 @@ jobs:
 
       - name: Run tests
         run: |
-          go test -coverprofile=coverage.out -v ./...
+          go test -coverprofile=coverage.out -v ./... -race
 
       - name: Check test coverage
         run: |

@@ -3,6 +3,7 @@ package k8s_test
 import (
 	"log/slog"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -244,15 +245,15 @@ func TestWatchPods(t *testing.T) {
 			})
 
 			// Prepare for the test
-			handleUpdateCalled := false
-			handleDeleteCalled := false
+			var handleUpdateCalled atomic.Bool
+			var handleDeleteCalled atomic.Bool
 
 			// Mock the UpdatePodMetricsFunc and DeletePodMetricsFunc for the test
 			pw.UpdatePodMetricsFunc = func(_ *corev1.Pod) {
-				handleUpdateCalled = true
+				handleUpdateCalled.Store(true)
 			}
 			pw.DeletePodMetricsFunc = func(_ *corev1.Pod) {
-				handleDeleteCalled = true
+				handleDeleteCalled.Store(true)
 			}
 
 			// Run WatchPods in a goroutine since it blocks indefinitely
@@ -286,7 +287,7 @@ func TestWatchPods(t *testing.T) {
 				// it can process a Delete event, so add it first.
 				fakeWatcher.Add(pod)
 				time.Sleep(100 * time.Millisecond)
-				handleUpdateCalled = false
+				handleUpdateCalled.Store(false)
 				fakeWatcher.Delete(pod)
 			case watch.Error:
 				break
@@ -300,11 +301,11 @@ func TestWatchPods(t *testing.T) {
 			// Check if the appropriate handler was called
 			switch tt.eventType {
 			case watch.Added, watch.Modified:
-				if handleUpdateCalled != tt.wantCalled {
+				if handleUpdateCalled.Load() != tt.wantCalled {
 					t.Errorf("UpdatePodMetricsFunc was not called when expected")
 				}
 			case watch.Deleted:
-				if handleDeleteCalled != tt.wantCalled {
+				if handleDeleteCalled.Load() != tt.wantCalled {
 					t.Errorf("DeletePodMetricsFunc was not called when expected")
 				}
 			case watch.Error, watch.Bookmark:

@@ -2,6 +2,8 @@ module github.com/canonical/metrics-k8s-proxy
 
 go 1.26
 
+toolchain go1.26.4
+
 require (
 	github.com/gorilla/mux v1.8.1
 	k8s.io/api v0.31.1
