@@ -318,6 +318,17 @@ func TestWatchPods(t *testing.T) {
 			case watch.Error, watch.Bookmark:
 				// No handler expected for these event types
 			}
+
+			// Cancel the context and verify WatchPods exits cleanly.
+			cancel()
+			select {
+			case watchErr := <-errCh:
+				if watchErr != nil {
+					t.Errorf("WatchPods returned unexpected error: %v", watchErr)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("WatchPods did not exit after context cancellation")
+			}
 		})
 	}
 }
