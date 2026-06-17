@@ -22,8 +22,8 @@ func ParseLabels(labelString string) map[string]string {
 	return labels
 }
 
-// appendLabels adds pod-specific labels to each metric.
-// this was added to allow metrics distinction if multiple pods are reporting the same metric.
+// AppendLabels adds pod-specific labels to each metric.
+// This was added to allow metrics distinction if multiple pods are reporting the same metric.
 func AppendLabels(metricsData, podName, namespace string) string {
 	// Split the metrics into lines
 	lines := strings.Split(metricsData, "\n")
@@ -42,14 +42,21 @@ func AppendLabels(metricsData, podName, namespace string) string {
 		// Otherwise, add the labels between the metric name and its value.
 		if strings.Contains(line, "{") {
 			// Insert the pod and namespace labels within the existing labels.
-			line = strings.Replace(line, "{", fmt.Sprintf("{k8s_pod_name=\"%s\",k8s_namespace=\"%s\",", podName, namespace), 1)
+			line = strings.Replace(
+				line, "{",
+				fmt.Sprintf("{k8s_pod_name=\"%s\",k8s_namespace=\"%s\",", podName, namespace),
+				1,
+			)
 		} else {
 			// Add the labels before the value (after the metric name).
 			parts := strings.Fields(line)
 			if len(parts) == MetricPartsLength {
 				metricName := parts[0]
 				metricValue := parts[1]
-				line = fmt.Sprintf("%s{k8s_pod_name=\"%s\",k8s_namespace=\"%s\"} %s", metricName, podName, namespace, metricValue)
+				line = fmt.Sprintf(
+					"%s{k8s_pod_name=\"%s\",k8s_namespace=\"%s\"} %s",
+					metricName, podName, namespace, metricValue,
+				)
 			}
 		}
 

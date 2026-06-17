@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -71,6 +72,8 @@ func (m *mockReadCloser) Close() error {
 }
 
 func Test_scrapePodMetrics(t *testing.T) {
+	t.Parallel()
+
 	type args struct {
 		podIP   string
 		metrics k8s.PodScrapeDetails
@@ -174,7 +177,8 @@ func Test_scrapePodMetrics(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := handlers.NewMetricsHandler(tt.args.client)
+			t.Parallel()
+			h := handlers.NewMetricsHandler(tt.args.client, slog.Default())
 			got := h.ScrapePodMetrics(tt.args.ctx, tt.args.podIP, tt.args.metrics)
 			if got != tt.want {
 				t.Errorf("scrapePodMetrics() = %v, want %v", got, tt.want)
@@ -185,7 +189,9 @@ func Test_scrapePodMetrics(t *testing.T) {
 
 // Test_aggregateMetrics tests the aggregateMetrics function.
 func Test_aggregateMetrics(t *testing.T) {
-	pw := k8s.NewPodScrapeWatcher()
+	t.Parallel()
+
+	pw := k8s.NewPodScrapeWatcher(slog.Default())
 	pw.PodMetricsEndpoints = map[string]k8s.PodScrapeDetails{
 		"127.0.0.1": {
 			Port:      "8080",
@@ -295,7 +301,8 @@ func Test_aggregateMetrics(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := handlers.NewMetricsHandler(tt.args.client)
+			t.Parallel()
+			h := handlers.NewMetricsHandler(tt.args.client, slog.Default())
 			// total context timeout is 1 second
 			if tt.name == "Context Deadline Exceeded" || tt.name == "One Pod Context Canceled, One Successful" {
 				var cancel context.CancelFunc
@@ -317,6 +324,8 @@ func Test_aggregateMetrics(t *testing.T) {
 
 // Test_ProxyMetrics tests the ProxyMetrics HTTP handler.
 func Test_ProxyMetrics(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name             string
 		mockClient       *mockHTTPClient
@@ -439,6 +448,7 @@ func Test_ProxyMetrics(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// Create a ResponseRecorder to capture the response
 			rr := httptest.NewRecorder()
 			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil)
@@ -447,11 +457,11 @@ func Test_ProxyMetrics(t *testing.T) {
 			}
 
 			// Initialize the PodScrapeWatcher with the appropriate endpoints for each test
-			pw := k8s.NewPodScrapeWatcher()
+			pw := k8s.NewPodScrapeWatcher(slog.Default())
 			pw.PodMetricsEndpoints = tt.podMetrics
 
 			// Override the global client with the mock client for the duration of this test
-			h := handlers.NewMetricsHandler(tt.mockClient)
+			h := handlers.NewMetricsHandler(tt.mockClient, slog.Default())
 			// Call the ProxyMetrics function
 			h.ProxyMetrics(rr, req, pw)
 

@@ -8,6 +8,7 @@ import (
 )
 
 func TestParseLabels(t *testing.T) {
+	t.Parallel()
 	type args struct {
 		labelString string
 	}
@@ -39,6 +40,7 @@ func TestParseLabels(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := util.ParseLabels(tt.args.labelString); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ParseLabels() = %v, want %v", got, tt.want)
 				t.Logf("Got: %q", got)
@@ -49,6 +51,7 @@ func TestParseLabels(t *testing.T) {
 }
 
 func TestAppendLabels(t *testing.T) {
+	t.Parallel()
 	type args struct {
 		metricsData string
 		podName     string
@@ -99,6 +102,7 @@ func TestAppendLabels(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := util.AppendLabels(tt.args.metricsData, tt.args.podName, tt.args.namespace)
 			if got != tt.want {
 				t.Errorf("AppendLabels() got = %v, want %v", got, tt.want)
@@ -110,6 +114,7 @@ func TestAppendLabels(t *testing.T) {
 }
 
 func TestAppendUpMetric(t *testing.T) {
+	t.Parallel()
 	type args struct {
 		metricsData string
 		podName     string
@@ -154,6 +159,7 @@ func TestAppendUpMetric(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := util.AppendUpMetric(tt.args.metricsData, tt.args.podName,
 				tt.args.namespace, tt.args.status); got != tt.want {
 				t.Errorf("AppendUpMetric() = %v, want %v", got, tt.want)

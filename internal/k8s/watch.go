@@ -1,7 +1,10 @@
 package k8s
 
 import (
-	"log"
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -24,10 +27,29 @@ type PodScrapeDetails struct {
 type PodScrapeWatcher struct {
 	PodMetricsEndpoints map[string]PodScrapeDetails
 	mu                  sync.Mutex
+	logger              *slog.Logger
 
 	// Function variables for update and delete operations, to allow mocking during tests.
 	UpdatePodMetricsFunc func(*corev1.Pod)
 	DeletePodMetricsFunc func(*corev1.Pod)
+}
+
+const defaultResyncPeriod = 10 * time.Minute
+
+// NewPodScrapeWatcher initializes a new PodScrapeWatcher with default function implementations.
+func NewPodScrapeWatcher(logger *slog.Logger) *PodScrapeWatcher {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	pw := &PodScrapeWatcher{
+		PodMetricsEndpoints: make(map[string]PodScrapeDetails),
+		logger:              logger,
+	}
+	pw.UpdatePodMetricsFunc = pw.UpdatePodMetrics
+	pw.DeletePodMetricsFunc = pw.DeletePodMetrics
+
+	return pw
 }
 
 // GetPodMetricsEndpoints returns a copy of the current pod metrics endpoints.
@@ -42,21 +64,15 @@ func (pw *PodScrapeWatcher) GetPodMetricsEndpoints() map[string]PodScrapeDetails
 	return endpointsCopy
 }
 
-const defaultResyncPeriod = 10 * time.Minute
-
-// NewPodScrapeWatcher initializes a new PodScrapeWatcher with default function implementations.
-func NewPodScrapeWatcher() *PodScrapeWatcher {
-	pw := &PodScrapeWatcher{
-		PodMetricsEndpoints: make(map[string]PodScrapeDetails),
-	}
-	pw.UpdatePodMetricsFunc = pw.UpdatePodMetrics
-	pw.DeletePodMetricsFunc = pw.DeletePodMetrics
-
-	return pw
-}
-
 // WatchPods starts the SharedInformer to monitor pod events and updates the metrics endpoints accordingly.
-func (pw *PodScrapeWatcher) WatchPods(clientset kubernetes.Interface, namespace string, labels map[string]string) {
+// It blocks until the provided context is cancelled. Returns an error if event handler registration
+// or initial cache sync fails.
+func (pw *PodScrapeWatcher) WatchPods(
+	ctx context.Context,
+	clientset kubernetes.Interface,
+	namespace string,
+	labels map[string]string,
+) error {
 	factory := informers.NewSharedInformerFactoryWithOptions(
 		clientset,
 		defaultResyncPeriod,
@@ -73,7 +89,7 @@ func (pw *PodScrapeWatcher) WatchPods(clientset kubernetes.Interface, namespace 
 		AddFunc: func(obj interface{}) {
 			pod, ok := obj.(*corev1.Pod)
 			if !ok {
-				log.Println("Error casting added object to Pod")
+				pw.logger.ErrorContext(ctx, "Error casting added object to Pod")
 				return
 			}
 			pw.UpdatePodMetricsFunc(pod)
@@ -81,7 +97,7 @@ func (pw *PodScrapeWatcher) WatchPods(clientset kubernetes.Interface, namespace 
 		UpdateFunc: func(_, newObj interface{}) {
 			newPod, ok := newObj.(*corev1.Pod)
 			if !ok {
-				log.Println("Error casting updated object to Pod")
+				pw.logger.ErrorContext(ctx, "Error casting updated object to Pod")
 				return
 			}
 			pw.UpdatePodMetricsFunc(newPod)
@@ -89,26 +105,42 @@ func (pw *PodScrapeWatcher) WatchPods(clientset kubernetes.Interface, namespace 
 		DeleteFunc: func(obj interface{}) {
 			pod, ok := obj.(*corev1.Pod)
 			if !ok {
-				log.Println("Error casting deleted object to Pod")
-				return
+				// When the informer's watch reconnects after a disconnect, deletes
+				// that occurred during the gap arrive as tombstones.
+				tombstone, tsOK := obj.(cache.DeletedFinalStateUnknown)
+				if !tsOK {
+					pw.logger.ErrorContext(ctx, "Error casting deleted object to Pod")
+					return
+				}
+				pod, ok = tombstone.Obj.(*corev1.Pod)
+				if !ok {
+					pw.logger.ErrorContext(ctx, "Tombstone contained unexpected object type")
+					return
+				}
 			}
 			pw.DeletePodMetricsFunc(pod)
 		},
 	}); err != nil {
-		log.Fatalf("Failed to add event handler: %v", err)
+		return fmt.Errorf("failed to add event handler: %w", err)
 	}
 
-	// Start the informer
+	// Derive a stopCh from the context so callers control the lifecycle.
 	stopCh := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		close(stopCh)
+	}()
+
 	factory.Start(stopCh)
 	// Wait for the informer cache to sync
 	if !cache.WaitForCacheSync(stopCh, podInformer.HasSynced) {
-		close(stopCh) // Explicitly close the channel before exiting
-		log.Fatal("Failed to sync pod cache")
+		return errors.New("failed to sync pod cache")
 	}
 
-	// Block until stopCh is closed
+	// Block until the context is cancelled
 	<-stopCh
+
+	return nil
 }
 
 // UpdatePodMetrics updates or adds pod metrics based on the pod annotations.
@@ -139,7 +171,7 @@ func (pw *PodScrapeWatcher) UpdatePodMetrics(pod *corev1.Pod) {
 		}
 		pw.mu.Unlock()
 
-		log.Printf("Updated pod %s with IP %s", pod.Name, podIP)
+		pw.logger.Info("Updated pod", "pod", pod.Name, "ip", podIP)
 	}
 }
 
@@ -151,6 +183,6 @@ func (pw *PodScrapeWatcher) DeletePodMetrics(pod *corev1.Pod) {
 		delete(pw.PodMetricsEndpoints, podIP)
 		pw.mu.Unlock()
 
-		log.Printf("Deleted pod %s with IP %s", pod.Name, podIP)
+		pw.logger.Info("Deleted pod", "pod", pod.Name, "ip", podIP)
 	}
 }

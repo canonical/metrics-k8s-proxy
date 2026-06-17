@@ -5,10 +5,11 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/canonical/metrics-k8s-proxy/internal/k8s"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
+
+	"github.com/canonical/metrics-k8s-proxy/internal/k8s"
 )
 
 // Mock functions for testing.
@@ -29,6 +30,7 @@ func mockNewClientsetFailure(_ *rest.Config) (kubernetes.Interface, error) {
 }
 
 func TestGetKubernetesClient(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		buildFunc  func() (*rest.Config, error)
@@ -57,6 +59,7 @@ func TestGetKubernetesClient(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got, got1, err := k8s.GetKubernetesClient(tt.buildFunc, tt.clientFunc)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GetKubernetesClient() error = %v, wantErr %v", err, tt.wantErr)

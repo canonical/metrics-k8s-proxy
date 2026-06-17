@@ -26,7 +26,7 @@ func GetKubernetesClient(
 	return config, clientset, nil
 }
 
-// Default functions to be used when not testing.
+// DefaultBuildConfigFunc is the default function to build a Kubernetes REST config when not testing.
 func DefaultBuildConfigFunc() (*rest.Config, error) {
 	if kubeconfig := os.Getenv("KUBECONFIG"); kubeconfig != "" {
 		return clientcmd.BuildConfigFromFlags("", kubeconfig)

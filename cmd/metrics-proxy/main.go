@@ -6,21 +6,22 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
 
+	"github.com/gorilla/mux"
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/canonical/metrics-k8s-proxy/internal/handlers"
 	"github.com/canonical/metrics-k8s-proxy/internal/k8s"
 	"github.com/canonical/metrics-k8s-proxy/internal/util"
-	"k8s.io/client-go/kubernetes"
-
-	"github.com/gorilla/mux"
 )
 
 const defaultScrapeTimeout = 9 * time.Second
 
-// Parses the label selector, timeout, and port from environment variables.
+// ParseEnvVars parses the label selector, timeout, and port from environment variables.
 func ParseEnvVars() (map[string]string, time.Duration, string, error) {
 	labelSelector := os.Getenv("POD_LABEL_SELECTOR")
 	scrapeTimeoutEnv := os.Getenv("SCRAPE_TIMEOUT")
@@ -66,7 +67,8 @@ func startServer(scrapeTimeout time.Duration, port string, pw *k8s.PodScrapeWatc
 	r := mux.NewRouter()
 
 	httpClient := &handlers.RealHTTPClient{Client: &http.Client{}}
-	metricsHandler := handlers.NewMetricsHandler(httpClient)
+	logger := slog.Default()
+	metricsHandler := handlers.NewMetricsHandler(httpClient, logger)
 
 	r.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		// Create a new context with a timeout based on the scrapeTimeout
@@ -121,9 +123,13 @@ func main() {
 	// Initialize Kubernetes client and start watching pods
 	clientset := initK8sClient()
 	// Create an instance of PodScrapeWatcher
-	podWatcher := k8s.NewPodScrapeWatcher()
+	podWatcher := k8s.NewPodScrapeWatcher(slog.Default())
 
-	go podWatcher.WatchPods(clientset, "", labels)
+	go func() {
+		if watchErr := podWatcher.WatchPods(context.Background(), clientset, "", labels); watchErr != nil {
+			log.Fatalf("Failed to watch pods: %v", watchErr)
+		}
+	}()
 	// Start the HTTP server
 	server := startServer(scrapeTimeout, port, podWatcher)
 
