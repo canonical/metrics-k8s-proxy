@@ -200,6 +200,53 @@ func TestDeletePodMetrics(t *testing.T) {
 	}
 }
 
+// triggerWatchEvent sends the appropriate event to the fake watcher based on event type.
+func triggerWatchEvent(
+	fakeWatcher *watch.FakeWatcher,
+	pod *corev1.Pod,
+	eventType watch.EventType,
+	handleUpdateCalled *atomic.Bool,
+) {
+	switch eventType {
+	case watch.Added:
+		fakeWatcher.Add(pod)
+	case watch.Modified:
+		fakeWatcher.Modify(pod)
+	case watch.Deleted:
+		// The informer requires the object to be in its cache before
+		// it can process a Delete event, so add it first.
+		fakeWatcher.Add(pod)
+		time.Sleep(100 * time.Millisecond)
+		handleUpdateCalled.Store(false)
+		fakeWatcher.Delete(pod)
+	case watch.Error, watch.Bookmark:
+		// No action needed
+	}
+}
+
+// assertHandlerCalled verifies the correct handler was invoked for the given event type.
+func assertHandlerCalled(
+	t *testing.T,
+	eventType watch.EventType,
+	handleUpdateCalled, handleDeleteCalled *atomic.Bool,
+	wantCalled bool,
+) {
+	t.Helper()
+
+	switch eventType {
+	case watch.Added, watch.Modified:
+		if handleUpdateCalled.Load() != wantCalled {
+			t.Errorf("UpdatePodMetricsFunc was not called when expected")
+		}
+	case watch.Deleted:
+		if handleDeleteCalled.Load() != wantCalled {
+			t.Errorf("DeletePodMetricsFunc was not called when expected")
+		}
+	case watch.Error, watch.Bookmark:
+		// No handler expected for these event types
+	}
+}
+
 // TestWatchPods tests the WatchPods function of the PodScrapeWatcher.
 func TestWatchPods(t *testing.T) {
 	t.Parallel()
@@ -284,40 +331,12 @@ func TestWatchPods(t *testing.T) {
 			}
 
 			// Trigger the event based on the test case
-			switch tt.eventType {
-			case watch.Added:
-				fakeWatcher.Add(pod)
-			case watch.Modified:
-				fakeWatcher.Modify(pod)
-			case watch.Deleted:
-				// The informer requires the object to be in its cache before
-				// it can process a Delete event, so add it first.
-				fakeWatcher.Add(pod)
-				time.Sleep(100 * time.Millisecond)
-				handleUpdateCalled.Store(false)
-				fakeWatcher.Delete(pod)
-			case watch.Error:
-				break
-			case watch.Bookmark:
-				break
-			}
+			triggerWatchEvent(fakeWatcher, pod, tt.eventType, &handleUpdateCalled)
 
 			// Allow some time for the event to be processed
 			time.Sleep(100 * time.Millisecond)
 
-			// Check if the appropriate handler was called
-			switch tt.eventType {
-			case watch.Added, watch.Modified:
-				if handleUpdateCalled.Load() != tt.wantCalled {
-					t.Errorf("UpdatePodMetricsFunc was not called when expected")
-				}
-			case watch.Deleted:
-				if handleDeleteCalled.Load() != tt.wantCalled {
-					t.Errorf("DeletePodMetricsFunc was not called when expected")
-				}
-			case watch.Error, watch.Bookmark:
-				// No handler expected for these event types
-			}
+			assertHandlerCalled(t, tt.eventType, &handleUpdateCalled, &handleDeleteCalled, tt.wantCalled)
 
 			// Cancel the context and verify WatchPods exits cleanly.
 			cancel()
