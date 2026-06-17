@@ -1,8 +1,9 @@
 package k8s
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
-	"os"
 	"sync"
 	"time"
 
@@ -63,7 +64,14 @@ func (pw *PodScrapeWatcher) GetPodMetricsEndpoints() map[string]PodScrapeDetails
 }
 
 // WatchPods starts the SharedInformer to monitor pod events and updates the metrics endpoints accordingly.
-func (pw *PodScrapeWatcher) WatchPods(clientset kubernetes.Interface, namespace string, labels map[string]string) {
+// It blocks until the provided context is cancelled. Returns an error if event handler registration
+// or initial cache sync fails.
+func (pw *PodScrapeWatcher) WatchPods(
+	ctx context.Context,
+	clientset kubernetes.Interface,
+	namespace string,
+	labels map[string]string,
+) error {
 	factory := informers.NewSharedInformerFactoryWithOptions(
 		clientset,
 		defaultResyncPeriod,
@@ -96,28 +104,42 @@ func (pw *PodScrapeWatcher) WatchPods(clientset kubernetes.Interface, namespace 
 		DeleteFunc: func(obj interface{}) {
 			pod, ok := obj.(*corev1.Pod)
 			if !ok {
-				pw.logger.Error("Error casting deleted object to Pod")
-				return
+				// When the informer's watch reconnects after a disconnect, deletes
+				// that occurred during the gap arrive as tombstones.
+				tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+				if !ok {
+					pw.logger.Error("Error casting deleted object to Pod")
+					return
+				}
+				pod, ok = tombstone.Obj.(*corev1.Pod)
+				if !ok {
+					pw.logger.Error("Tombstone contained unexpected object type")
+					return
+				}
 			}
 			pw.DeletePodMetricsFunc(pod)
 		},
 	}); err != nil {
-		pw.logger.Error("Failed to add event handler", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to add event handler: %w", err)
 	}
 
-	// Start the informer
+	// Derive a stopCh from the context so callers control the lifecycle.
 	stopCh := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		close(stopCh)
+	}()
+
 	factory.Start(stopCh)
 	// Wait for the informer cache to sync
 	if !cache.WaitForCacheSync(stopCh, podInformer.HasSynced) {
-		close(stopCh) // Explicitly close the channel before exiting
-		pw.logger.Error("Failed to sync pod cache")
-		os.Exit(1)
+		return fmt.Errorf("failed to sync pod cache")
 	}
 
-	// Block until stopCh is closed
+	// Block until the context is cancelled
 	<-stopCh
+
+	return nil
 }
 
 // UpdatePodMetrics updates or adds pod metrics based on the pod annotations.

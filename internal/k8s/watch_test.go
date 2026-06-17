@@ -1,6 +1,7 @@
 package k8s_test
 
 import (
+	"context"
 	"log/slog"
 	"reflect"
 	"sync/atomic"
@@ -256,8 +257,14 @@ func TestWatchPods(t *testing.T) {
 				handleDeleteCalled.Store(true)
 			}
 
-			// Run WatchPods in a goroutine since it blocks indefinitely
-			go pw.WatchPods(fakeClientset, tt.namespace, tt.labels)
+			// Run WatchPods in a goroutine since it blocks until context cancellation
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			errCh := make(chan error, 1)
+			go func() {
+				errCh <- pw.WatchPods(ctx, fakeClientset, tt.namespace, tt.labels)
+			}()
 
 			// Give the informer time to start and sync
 			time.Sleep(100 * time.Millisecond)

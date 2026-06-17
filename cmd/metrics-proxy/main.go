@@ -125,7 +125,11 @@ func main() {
 	// Create an instance of PodScrapeWatcher
 	podWatcher := k8s.NewPodScrapeWatcher(slog.Default())
 
-	go podWatcher.WatchPods(clientset, "", labels)
+	go func() {
+		if err := podWatcher.WatchPods(context.Background(), clientset, "", labels); err != nil {
+			log.Fatalf("Failed to watch pods: %v", err)
+		}
+	}()
 	// Start the HTTP server
 	server := startServer(scrapeTimeout, port, podWatcher)
 
