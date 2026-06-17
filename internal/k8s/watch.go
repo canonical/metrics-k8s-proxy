@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -88,7 +89,7 @@ func (pw *PodScrapeWatcher) WatchPods(
 		AddFunc: func(obj interface{}) {
 			pod, ok := obj.(*corev1.Pod)
 			if !ok {
-				pw.logger.Error("Error casting added object to Pod")
+				pw.logger.ErrorContext(ctx, "Error casting added object to Pod")
 				return
 			}
 			pw.UpdatePodMetricsFunc(pod)
@@ -96,7 +97,7 @@ func (pw *PodScrapeWatcher) WatchPods(
 		UpdateFunc: func(_, newObj interface{}) {
 			newPod, ok := newObj.(*corev1.Pod)
 			if !ok {
-				pw.logger.Error("Error casting updated object to Pod")
+				pw.logger.ErrorContext(ctx, "Error casting updated object to Pod")
 				return
 			}
 			pw.UpdatePodMetricsFunc(newPod)
@@ -106,14 +107,14 @@ func (pw *PodScrapeWatcher) WatchPods(
 			if !ok {
 				// When the informer's watch reconnects after a disconnect, deletes
 				// that occurred during the gap arrive as tombstones.
-				tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
-				if !ok {
-					pw.logger.Error("Error casting deleted object to Pod")
+				tombstone, tsOK := obj.(cache.DeletedFinalStateUnknown)
+				if !tsOK {
+					pw.logger.ErrorContext(ctx, "Error casting deleted object to Pod")
 					return
 				}
 				pod, ok = tombstone.Obj.(*corev1.Pod)
 				if !ok {
-					pw.logger.Error("Tombstone contained unexpected object type")
+					pw.logger.ErrorContext(ctx, "Tombstone contained unexpected object type")
 					return
 				}
 			}
@@ -133,7 +134,7 @@ func (pw *PodScrapeWatcher) WatchPods(
 	factory.Start(stopCh)
 	// Wait for the informer cache to sync
 	if !cache.WaitForCacheSync(stopCh, podInformer.HasSynced) {
-		return fmt.Errorf("failed to sync pod cache")
+		return errors.New("failed to sync pod cache")
 	}
 
 	// Block until the context is cancelled

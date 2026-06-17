@@ -126,8 +126,8 @@ func main() {
 	podWatcher := k8s.NewPodScrapeWatcher(slog.Default())
 
 	go func() {
-		if err := podWatcher.WatchPods(context.Background(), clientset, "", labels); err != nil {
-			log.Fatalf("Failed to watch pods: %v", err)
+		if watchErr := podWatcher.WatchPods(context.Background(), clientset, "", labels); watchErr != nil {
+			log.Fatalf("Failed to watch pods: %v", watchErr)
 		}
 	}()
 	// Start the HTTP server
