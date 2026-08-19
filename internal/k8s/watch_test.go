@@ -348,14 +348,17 @@ func TestWatchPods(t *testing.T) {
 			time.Sleep(100 * time.Millisecond)
 
 			// Check if the appropriate handler was called
-			if tt.eventType == watch.Added || tt.eventType == watch.Modified {
+			switch tt.eventType {
+			case watch.Added, watch.Modified:
 				if handleUpdateCalled != tt.wantCalled {
 					t.Errorf("UpdatePodMetricsFunc was not called when expected")
 				}
-			} else if tt.eventType == watch.Deleted {
+			case watch.Deleted:
 				if handleDeleteCalled != tt.wantCalled {
 					t.Errorf("DeletePodMetricsFunc was not called when expected")
 				}
+			case watch.Bookmark, watch.Error:
+				// no handlers should be called
 			}
 		})
 	}
