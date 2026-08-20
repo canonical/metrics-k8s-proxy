@@ -4,6 +4,9 @@ on:
   push:
     tags: ["*"]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build and Release metrics-proxy
